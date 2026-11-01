@@ -1299,7 +1299,10 @@ test('/grammar prompt edit writes the note and every section, and changes nothin
   await clock.advance(5)
   expect(asked.systems[0]).toBe(legacySystem({ ...NOW_SYSTEM, dialect: 'us', showWhy: false }))
   const shown = await promptText($)
-  expect(shown).toContain('Prompt: yours, from /home/u/.claude/grammar-prompt.md (sections: rules, spelling any, spelling us, spelling uk, ignore, answer, kind, natural)')
+  expect(shown.startsWith('Prompt: yours\n')).toBe(true)
+  for (const n of PART_NAMES) {
+    expect(shown).toContain(`\n${n}: global (/home/u/.claude/grammar-prompt.md)\n`)
+  }
   expect(shown).toContain(legacySystem({ ...NOW_SYSTEM, dialect: 'us', showWhy: false }))
   expect(shown).not.toContain('Problems')
 
@@ -1321,7 +1324,7 @@ test('one overridden section changes only that part; the file is read on every c
   await clock.advance(5)
   expect(asked.systems[1]).toBe(legacySystem(NOW_SYSTEM).replace(BUILT_IN.rules, 'Second.'))
   const shown = await promptText($)
-  expect(shown.startsWith('Prompt: yours, from /home/u/.claude/grammar-prompt.md (sections: rules)\n')).toBe(true)
+  expect(shown.startsWith('Prompt: yours\nrules: global (/home/u/.claude/grammar-prompt.md)\nspelling any: built-in\n')).toBe(true)
   expect((await $.command.run({ command: 'grammar', args: 'help' } as never)).text).toContain('Prompt: yours (/home/u/.claude/grammar-prompt.md)')
   asked.files.delete(PROMPT_FILE)
   await $.prompt.submit({ text: `${TYPO} third` } as never)
@@ -1406,6 +1409,96 @@ test('problems in the prompt file: one toast each, listed in /grammar prompt, ch
   expect(ours.join('\n')).toContain('"## kind" is empty')
   const shown = await promptText($)
   expect(shown).toContain('Problems:')
-  expect(shown).toContain('- Unknown section "## bogus part"')
-  expect(shown).toContain('(sections: rules, ignore)')
+  expect(shown).toContain('- /home/u/.claude/grammar-prompt.md: Unknown section "## bogus part"')
+  expect(shown).toContain('\nrules: global (/home/u/.claude/grammar-prompt.md)\n')
+  expect(shown).toContain('\nignore: global (/home/u/.claude/grammar-prompt.md)\n')
+  expect(shown).toContain('\nkind: built-in\n')
+})
+
+const PROJECT_PROMPT_FILE = '/work/app/.claude/grammar-prompt.md'
+
+test('the header lists every section heading, and parses as no section', () => {
+  for (const n of PART_NAMES) {
+    expect(PROMPT_HEADER).toContain(`## ${n} `)
+  }
+  expect(parsePromptFile(PROMPT_HEADER)).toEqual({ parts: {}, problems: [] })
+})
+
+test('a project section beats a global one, which beats the built-in text', async ($, on) => {
+  const clock = mock.clock(on)
+  const asked = haiku(on, FIXES, undefined, {
+    [PROMPT_FILE]: sections({ rules: 'GLOBAL RULES', kind: 'GLOBAL KIND', natural: 'GLOBAL NATURAL' }),
+    [PROJECT_PROMPT_FILE]: sections({ rules: 'PROJECT RULES', natural: 'PROJECT NATURAL' }),
+  })
+  await $.prompt.submit({ text: TYPO } as never)
+  await clock.advance(5)
+  expect(asked.systems[0]).toBe(
+    legacySystem(NOW_SYSTEM).replace(BUILT_IN.rules, 'PROJECT RULES').replace(BUILT_IN.kind, 'GLOBAL KIND').replace(BUILT_IN.natural, 'PROJECT NATURAL'),
+  )
+  const shown = await promptText($)
+  expect(shown.startsWith('Prompt: yours\n')).toBe(true)
+  expect(shown).toContain('\nrules: project (/work/app/.claude/grammar-prompt.md)\n')
+  expect(shown).toContain('\nkind: global (/home/u/.claude/grammar-prompt.md)\n')
+  expect(shown).toContain('\nanswer: built-in\n')
+  expect(shown).toContain('\nnatural: project (/work/app/.claude/grammar-prompt.md)\n')
+  expect((await $.command.run({ command: 'grammar', args: 'help' } as never)).text).toContain(
+    'Prompt: yours (/home/u/.claude/grammar-prompt.md, /work/app/.claude/grammar-prompt.md)',
+  )
+})
+
+test('settings still choose: natural off drops a project natural section', async ($, on) => {
+  const clock = mock.clock(on)
+  const asked = haiku(on, FIXES, undefined, { [PROJECT_PROMPT_FILE]: sections({ natural: 'PROJECT NATURAL' }) })
+  await $.prompt.submit({ text: TYPO } as never)
+  await clock.advance(5)
+  expect(asked.systems[0]).toContain('PROJECT NATURAL')
+  await $.command.run({ command: 'grammar', args: 'natural off' } as never)
+  await $.prompt.submit({ text: `${TYPO} again` } as never)
+  await clock.advance(5)
+  expect(asked.systems[1]).not.toContain('PROJECT NATURAL')
+  expect(asked.systems[1]).toBe(legacySystem({ natural: false, kind: true }))
+})
+
+test('/grammar prompt edit project writes the header only, and leaves an existing file alone', async ($, on) => {
+  const clock = mock.clock(on)
+  const asked = haiku(on, FIXES)
+  const r = await promptText($, 'edit project')
+  expect(r).toContain(PROJECT_PROMPT_FILE)
+  expect(r).toContain('overrides nothing until you add a section')
+  expect(r).toContain('part of the project')
+  expect(asked.files.get(PROJECT_PROMPT_FILE)).toBe(`${PROMPT_HEADER}\n`)
+  expect(asked.files.has(PROMPT_FILE)).toBe(false)
+  expect(parsePromptFile(asked.files.get(PROJECT_PROMPT_FILE) ?? '')).toEqual({ parts: {}, problems: [] })
+  await $.prompt.submit({ text: TYPO } as never)
+  await clock.advance(5)
+  expect(asked.systems[0]).toBe(legacySystem(NOW_SYSTEM))
+  expect(await promptText($)).toContain('Prompt: built-in\n')
+  asked.files.set(PROJECT_PROMPT_FILE, 'mine')
+  await promptText($, 'edit project')
+  expect(asked.files.get(PROJECT_PROMPT_FILE)).toBe('mine')
+  expect(await promptText($, 'edit elsewhere')).toContain('/grammar prompt')
+})
+
+test('a write that fails says so', async ($, on) => {
+  haiku(on, FIXES)
+  writeFails = 'ENOENT: no such directory'
+  const r = await promptText($, 'edit project')
+  expect(r).toContain('Could not write /work/app/.claude/grammar-prompt.md')
+  expect(r).toContain('Could not write ')
+})
+
+test('problems in the project file carry its path; the global file keeps its own', async ($, on) => {
+  const clock = mock.clock(on)
+  const asked = haiku(on, FIXES, undefined, {
+    [PROMPT_FILE]: sections({ 'bogus part': 'x' }),
+    [PROJECT_PROMPT_FILE]: sections({ rules: '' }),
+  })
+  await $.prompt.submit({ text: TYPO } as never)
+  await clock.advance(5)
+  expect(asked.systems[0]).toBe(legacySystem(NOW_SYSTEM))
+  expect(toasts.filter(t => t.startsWith('grammar: /work/app/.claude/grammar-prompt.md: '))).toHaveLength(1)
+  expect(toasts.filter(t => t.startsWith('grammar: /home/u/.claude/grammar-prompt.md: '))).toHaveLength(1)
+  const shown = await promptText($)
+  expect(shown).toContain('- /work/app/.claude/grammar-prompt.md: Section "## rules" is empty')
+  expect(shown).toContain('- /home/u/.claude/grammar-prompt.md: Unknown section "## bogus part"')
 })

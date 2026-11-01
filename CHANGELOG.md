@@ -8,7 +8,8 @@ Each version is tagged `vX.Y.Z` and has a [GitHub release](https://github.com/ja
 - Your settings still choose which parts are sent: the spelling setting picks the spelling section, `ignore` goes only with ignore words (`{words}`), `answer` fills `{why}` and `{kind}` from `show_why` and history, `kind` only with history, `natural` only with the native-speaker line. Text above the first heading is never sent.
 - A problem in the file (unknown or repeated heading, empty section, missing `{words}`, `{why}` or `{kind}`, unknown `{marker}`) never stops a check: it shows as a toast once, and the part falls back to the built-in text.
 - `/grammar prompt` says which prompt is in use and which sections the file overrides, lists problems, and prints the prompt your settings put together. `/grammar prompt edit` writes the file with a note and every section, if it doesn't exist. `/grammar help` has a `Prompt:` line.
-- `tools/import-history.ts` uses the file too, followed by its batch instructions.
+- A project can have its own: `.claude/grammar-prompt.md` in its root, same format. Per section the project file beats the global one, which beats the built-in text; both are read on every check, and a problem is reported with its file's path. `/grammar prompt edit project` writes it with the note only (so it overrides nothing yet) and leaves an existing one alone. The note now lists every section heading as you type it. It is part of the repo, so whoever clones it gets it. `/grammar prompt` shows the source of each part.
+- `tools/import-history.ts` uses the global file too, followed by its batch instructions.
 - Without the file the prompt is unchanged, so the costs in the README are too.
 
 ## 1.4.0 (2026-10-31)

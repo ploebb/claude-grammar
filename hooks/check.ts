@@ -119,21 +119,29 @@ export const parsePromptFile = (text: string): ParsedPrompt => {
   return { parts, problems }
 }
 
-/** The explanatory note at the top of a new grammar-prompt.md (hidden in Markdown viewers, never sent). */
+/**
+ * The explanatory note at the top of a new grammar-prompt.md, global or project (hidden in Markdown viewers, never
+ * sent). Its table rows start with spaces, so none of them reads as a `## ` heading.
+ */
 export const PROMPT_HEADER = `<!--
 grammar: your check prompt. Each "## name" section below replaces that part of the built-in prompt.
-Delete a section to use the built-in text for it again; delete this file to go back to the built-in prompt entirely.
-Keep the headings as they are: an unknown heading is ignored (/grammar prompt and a toast tell you).
+Layers: a section here beats the same section in the other file (the project's .claude/grammar-prompt.md beats the
+one in your Claude Code folder), and both beat the built-in text. A section you leave out comes from the next level.
+Delete a section to fall back to it, or the file to drop all of its sections.
+Type the headings exactly as below: an unknown heading is ignored (/grammar prompt and a toast tell you).
 
-Which parts are sent depends on your settings:
-  rules                 always
-  spelling any|us|uk    the one your spelling setting picks
-  ignore                only when you have ignore words; {words} is replaced by them
-  answer                always; {why} and {kind} add those fields when show_why / history are on
-  kind                  only when history is on
-  natural               only when the native-speaker line is on
+  heading            sent                                       markers
+  ## rules           always
+  ## spelling any    when your spelling setting is any
+  ## spelling us     when your spelling setting is us
+  ## spelling uk     when your spelling setting is uk
+  ## ignore          only when you have ignore words            {words}: the words
+  ## answer          always                                     {why}, {kind}: add those fields (show_why, history)
+  ## kind            only when history is on
+  ## natural         only when the native-speaker line is on
+
 The plugin reads the reply as JSON in the shape "answer" describes; if you change that shape, checks fail.
-/grammar prompt shows the prompt your settings put together from this file.
+/grammar prompt shows the prompt your settings put together, and where each part comes from.
 Text above the first heading (like this note) is not sent.
 -->`
 

@@ -17,8 +17,8 @@ import {
   wordCount,
 } from './config'
 import type { Ignore, Lists, Settings } from './config'
-import { PART_NAMES, keepFixes, parsePromptFile, parseReply, promptFileText, system, typedPart } from './check'
-import type { ParsedPrompt } from './check'
+import { PART_NAMES, PROMPT_HEADER, keepFixes, parsePromptFile, parseReply, promptFileText, system, typedPart } from './check'
+import type { Overrides, ParsedPrompt, PartName } from './check'
 import {
   EMPTY_HISTORY,
   KEEP_DAYS,
@@ -109,6 +109,9 @@ const historyFile = ($: EngineInterface) => configFile($, 'grammar-history.json'
 
 /** The user's own prompt parts: `## ` sections that replace parts of the built-in prompt. */
 const promptFile = ($: EngineInterface) => configFile($, 'grammar-prompt.md')
+
+/** The project's grammar-prompt.md, in its .claude folder: parts for this project, shared with whoever clones it. */
+const projectPromptFile = async ($: EngineInterface) => `${(await $.session.root()).replace(/[\\/]+$/, '')}/.claude/grammar-prompt.md`
 
 /** The project's grammar.json, in its .claude folder. */
 const projectFile = async ($: EngineInterface) => `${(await $.session.root()).replace(/[\\/]+$/, '')}/.claude/grammar.json`
@@ -234,25 +237,52 @@ const migrate = async ($: EngineInterface) => {
   return moved
 }
 
-/** The parts grammar-prompt.md overrides and its problems; no parts when it is missing, unreadable or blank. */
-const customPrompt = async ($: EngineInterface): Promise<ParsedPrompt> => {
+/** The prompt parts the files override, where each comes from, and the problems found (each led by its file's path). */
+type CustomPrompt = { parts: Overrides; from: Partial<Record<PartName, { level: 'project' | 'global'; path: string }>>; problems: string[]; files: string[] }
+
+/** One grammar-prompt.md: nothing when it is missing, unreadable or blank. */
+const readPromptFile = async ($: EngineInterface, path: string | undefined): Promise<ParsedPrompt | undefined> => {
   try {
-    const path = await promptFile($)
     const text = path !== undefined && (await $.fs.exists(path)) ? String(await $.fs.read(path)) : ''
-    return text.trim() === '' ? { parts: {}, problems: [] } : parsePromptFile(text)
+    return text.trim() === '' ? undefined : parsePromptFile(text)
   } catch {
-    return { parts: {}, problems: [] }
+    return undefined
   }
 }
 
-/** A toast, once, for each problem the prompt file has. */
-const reportPrompt = async ($: EngineInterface, mine: ParsedPrompt) => {
-  const path = await promptFile($)
-  mine.problems.forEach(p => toastOnce($, `grammar: ${path}: ${p}`))
+/** The parts the project's and the global grammar-prompt.md override: a project section beats a global one. */
+const customPrompt = async ($: EngineInterface): Promise<CustomPrompt> => {
+  const mine: CustomPrompt = { parts: {}, from: {}, problems: [], files: [] }
+  const global = await promptFile($).catch(() => undefined)
+  const project = await projectPromptFile($).catch(() => undefined)
+  const files = [
+    { level: 'global' as const, path: global },
+    // The same file twice (the project is the home folder): once.
+    ...(project !== undefined && project !== global ? [{ level: 'project' as const, path: project }] : []),
+  ]
+  for (const { level, path } of files) {
+    const parsed = await readPromptFile($, path)
+    if (path === undefined || parsed === undefined) {
+      continue
+    }
+    for (const n of PART_NAMES) {
+      const text = parsed.parts[n]
+      if (text !== undefined) {
+        mine.parts[n] = text
+        mine.from[n] = { level, path }
+      }
+    }
+    mine.files.push(path)
+    mine.problems.push(...parsed.problems.map(p => `${path}: ${p}`))
+  }
+  return mine
 }
 
+/** A toast, once, for each problem the prompt files have. */
+const reportPrompt = ($: EngineInterface, mine: CustomPrompt) => mine.problems.forEach(p => toastOnce($, `grammar: ${p}`))
+
 /** The system prompt as the current settings, ignore words and prompt file build it. */
-const currentPrompt = async ($: EngineInterface, s: Settings, mine: ParsedPrompt) => {
+const currentPrompt = async ($: EngineInterface, s: Settings, mine: CustomPrompt) => {
   const lists = await loadLists($).catch(() => EMPTY)
   const kind = lists.history && (await read($, keepsHistory))
   return system({ natural: await read($, isNatural), dialect: s.dialect, showWhy: s.showWhy, kind, ignore: compileIgnore(lists.ignore).words }, mine.parts)
@@ -260,7 +290,7 @@ const currentPrompt = async ($: EngineInterface, s: Settings, mine: ParsedPrompt
 
 const ask = async ($: EngineInterface, s: Settings, text: string, natural: boolean, kind: boolean, ignore: Ignore) => {
   const mine = await customPrompt($)
-  await reportPrompt($, mine)
+  reportPrompt($, mine)
   const request = {
     model: s.model,
     system: system({ natural, dialect: s.dialect, showWhy: s.showWhy, kind, ignore: ignore.words }, mine.parts),
@@ -390,7 +420,7 @@ const USAGE = `/grammar help: this list, and what is on now
 /grammar stats [7d|30d|since 2026-10-01]: your most frequent mistakes, from the kept fixes
 /grammar review [7d|30d|since 2026-10-01]: a summary, then advice on them from Sonnet (one call, from ${REVIEW_FROM} fixes)
 /grammar history [on|off|clear]: keeping fixes for stats and review
-/grammar prompt [edit]: the system prompt in use; edit writes grammar-prompt.md to change it
+/grammar prompt [edit [project]]: the system prompt in use and where each part comes from; edit writes grammar-prompt.md (project: this project's) to change it
 More settings (model, spelling, minimum words, icons) are under /config.`
 
 /** Adds or removes entries in the global grammar.json, keeping whatever else the file holds. */
@@ -530,34 +560,64 @@ const historyCommand = async ($: EngineInterface, sub: string) => {
   ].join('\n')
 }
 
-const promptCommand = async ($: EngineInterface, s: Settings, sub: string) => {
-  if (sub !== '' && sub !== 'edit') {
+const promptCommand = async ($: EngineInterface, s: Settings, sub: string, which: string) => {
+  if ((sub !== '' && sub !== 'edit') || (sub === 'edit' && which !== '' && which !== 'project') || (sub === '' && which !== '')) {
     return USAGE
   }
-  const path = await promptFile($)
-  if (path === undefined) {
-    return 'No home folder to keep grammar-prompt.md in.'
-  }
   if (sub === 'edit') {
-    if (!(await $.fs.exists(path))) {
-      await $.fs.write(path, promptFileText())
-    }
-    return `Your prompt file: ${path}\nEdit the sections in any editor; changes apply to your next prompt. Delete a section to get its built-in text back, or the file to go back to the built-in prompt.`
+    return which === 'project' ? editProjectPrompt($) : editPrompt($)
   }
   const mine = await customPrompt($)
-  const names = PART_NAMES.filter(n => mine.parts[n] !== undefined)
+  const overridden = PART_NAMES.some(n => mine.from[n] !== undefined)
   return [
-    names.length > 0 ? `Prompt: yours, from ${path} (sections: ${names.join(', ')})` : `Prompt: built-in (${path} does not exist or overrides no part).`,
+    overridden ? 'Prompt: yours' : 'Prompt: built-in',
+    ...PART_NAMES.map(n => {
+      const f = mine.from[n]
+      return `${n}: ${f === undefined ? 'built-in' : `${f.level} (${f.path})`}`
+    }),
     ...(mine.problems.length > 0 ? ['', 'Problems:', ...mine.problems.map(p => `- ${p}`)] : []),
     '',
     await currentPrompt($, s, mine),
   ].join('\n')
 }
 
-/** The help's prompt line: the file's path while it overrides any part, else built-in. */
+/** /grammar prompt edit: the global file, written with every part when it doesn't exist. */
+const editPrompt = async ($: EngineInterface) => {
+  const path = await promptFile($)
+  if (path === undefined) {
+    return 'No home folder to keep grammar-prompt.md in.'
+  }
+  if (!(await $.fs.exists(path))) {
+    await $.fs.write(path, promptFileText())
+  }
+  return `Your prompt file: ${path}\nEdit the sections in any editor; changes apply to your next prompt. Delete a section to get its built-in text back, or the file to go back to the built-in prompt.`
+}
+
+/** /grammar prompt edit project: the project's file, written with the note only when it doesn't exist. */
+const editProjectPrompt = async ($: EngineInterface) => {
+  const path = await projectPromptFile($).catch(() => undefined)
+  if (path === undefined) {
+    return 'No project folder to keep a grammar-prompt.md in.'
+  }
+  if (!(await $.fs.exists(path))) {
+    try {
+      await $.fs.write(path, `${PROMPT_HEADER}\n`)
+    } catch (err) {
+      return `Could not write ${path}: ${message(err)}`
+    }
+  }
+  return [
+    `This project's prompt file: ${path}`,
+    'It overrides nothing until you add a section; the note at its top lists them.',
+    "It is part of the project's repo, so whoever clones it gets it too.",
+  ].join('\n')
+}
+
+/** The help's prompt line: the files that override any part, else built-in. */
 const promptLine = async ($: EngineInterface) => {
   const mine = await customPrompt($)
-  return `Prompt: ${PART_NAMES.some(n => mine.parts[n] !== undefined) ? `yours (${await promptFile($)})` : 'built-in'}.`
+  const paths = mine.files.filter(f => PART_NAMES.some(n => mine.from[n]?.path === f))
+  return `Prompt: ${paths.length > 0 ? `yours (${paths.join(', ')})` : 'built-in'}.`
 }
 
 /** The help's history line: on or off, and how many fixes are kept. */
@@ -642,7 +702,7 @@ export const register: Register = (on, options) => {
         return { text: await historyCommand($, sub) }
       }
       case 'prompt':
-        return { text: await promptCommand($, s, sub) }
+        return { text: await promptCommand($, s, sub, (rest[1] ?? '').toLowerCase()) }
       case 'ignore': {
         const words = entriesFrom(rest.slice(1).join(' '))
         if (sub === '' || sub === 'list') {

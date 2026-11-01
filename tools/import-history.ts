@@ -8,6 +8,9 @@
 //   bun tools/import-history.ts --config-dir ~/.claude-work
 //
 // Only days before the history's first day are imported, so a second run adds nothing twice.
+//
+// The prompt is the global one: grammar-prompt.md in the config folder, if it exists. A project's own
+// .claude/grammar-prompt.md is not used, since one run checks prompts from every project with the same prompt.
 import { spawn } from 'node:child_process'
 import { createReadStream, existsSync, mkdtempSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
@@ -58,7 +61,7 @@ const loadSettings = (): Settings => {
   }
 }
 
-/** The parts grammar-prompt.md overrides, as the plugin reads them; none when it is missing, unreadable or blank. */
+/** The parts the global grammar-prompt.md overrides, as the plugin reads them; none when it is missing, unreadable or blank. */
 const customParts = (): Overrides => {
   try {
     return parsePromptFile(readFileSync(join(configDir, 'grammar-prompt.md'), 'utf8')).parts
