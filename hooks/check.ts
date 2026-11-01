@@ -38,11 +38,10 @@ Never use "natural" for style taste, for a sentence that is fine once the fixes 
 /** The {markers} each part fills in; any other part has none. */
 const MARKERS: Partial<Record<PartName, readonly string[]>> = { ignore: ['words'], answer: ['why', 'kind'] }
 
-const MARKER = /\{([A-Za-z_][\w ]*)\}/g
+const MARKER = /\{(\w+)\}/g
 
 /** The text with its known {markers} replaced; unknown ones stay as written. */
-const fill = (text: string, values: Record<string, string>) =>
-  text.replace(MARKER, (m, k: string) => (Object.hasOwn(values, k) ? (values[k] ?? m) : m))
+const fill = (text: string, values: Map<string, string>) => text.replace(MARKER, (m, k: string) => values.get(k) ?? m)
 
 export type PromptParts = { natural: boolean; dialect?: Dialect; showWhy?: boolean; kind?: boolean; ignore?: readonly string[] }
 
@@ -53,11 +52,14 @@ export type PromptParts = { natural: boolean; dialect?: Dialect; showWhy?: boole
 export const system = ({ natural, dialect = 'any', showWhy = true, kind = true, ignore = [] }: PromptParts, over: Overrides = {}) => {
   const part = (name: PartName) => over[name] ?? BUILT_IN[name]
   const words = ignore.slice(0, MAX_PROMPT_WORDS)
-  const never = words.length > 0 ? [fill(part('ignore'), { words: words.map(w => JSON.stringify(w)).join(', ') })] : []
-  const shape = fill(part('answer'), {
-    why: showWhy ? ', "why": "<2 to 4 words>"' : '',
-    kind: kind ? `, "kind": "<one of: ${KINDS.join(', ')}>"` : '',
-  })
+  const never = words.length > 0 ? [fill(part('ignore'), new Map([['words', words.map(w => JSON.stringify(w)).join(', ')]]))] : []
+  const shape = fill(
+    part('answer'),
+    new Map([
+      ['why', showWhy ? ', "why": "<2 to 4 words>"' : ''],
+      ['kind', kind ? `, "kind": "<one of: ${KINDS.join(', ')}>"` : ''],
+    ]),
+  )
   return [part('rules'), part(`spelling ${dialect}`), ...never, shape, ...(kind ? [part('kind')] : []), ...(natural ? [part('natural')] : [])].join('\n')
 }
 
@@ -168,7 +170,7 @@ export const parseReply = (text: string): GrammarReply | null => {
     throw new Error('no fixes in the reply')
   }
   const valid = reply.fixes.filter(isFix)
-  // A custom answer section may have renamed from/to: dropping every fix would show a prompt full of mistakes as clean.
+  // An answer section may have renamed from/to: dropping every fix would show a prompt full of mistakes as clean.
   if (reply.fixes.length > 0 && valid.length === 0) {
     throw new Error('the reply\'s fixes have no "from" and "to" fields (is the answer section of your prompt asking for them?)')
   }

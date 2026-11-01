@@ -55,9 +55,9 @@ A prompt with no mistakes gets a green `✓` before it instead. From the third c
 | `/grammar ignore` | Shows the ignore and skip lists and the files they're in. |
 | `/grammar stats [period]` | Your mistakes by kind, the fixes you keep repeating, and whether you're making fewer. No model call. |
 | `/grammar review [period]` | A summary card, then the 3 to 5 habits behind most of your mistakes from one Sonnet call, with your own fixes as examples. Needs 20 kept fixes in the period. |
-| `/grammar prompt` | Shows whether the built-in prompt or your own is in use, where each part comes from (built-in, global file or project file), any problems in the files, and the system prompt your settings put together. |
-| `/grammar prompt edit` | Writes `grammar-prompt.md` in your Claude Code folder with a section per prompt part, if the file doesn't exist, and tells you where it is. |
-| `/grammar prompt edit project` | Writes the project's `.claude/grammar-prompt.md` with the note only and no sections, if the file doesn't exist, and tells you where it is. |
+| `/grammar prompt` | Shows where each part of the prompt comes from (built-in, global or project file), the problems in the files, and the prompt your settings put together. |
+| `/grammar prompt edit` | Writes `grammar-prompt.md` in your Claude Code folder with every section, if it doesn't exist. See [your own prompt](#your-own-prompt). |
+| `/grammar prompt edit project` | Writes the project's `.claude/grammar-prompt.md` with the note only, if it doesn't exist. |
 | `/grammar history on\|off` | Keeps your fixes, or stops keeping new ones. |
 | `/grammar history clear` | Empties the history file. |
 | `/grammar history` | Shows whether it's on, how many fixes are kept, and where. |
@@ -114,9 +114,9 @@ The native-speaker line is rare on purpose. It shows only when a sentence is cle
 
 ## Your own prompt
 
-You can replace parts of the check prompt. Run `/grammar prompt edit`: it writes `grammar-prompt.md` in your Claude Code folder (`~/.claude/`, or `$CLAUDE_CONFIG_DIR`) with a short note and one `## name` section per part, each holding the built-in text. It leaves a file that exists alone. Edit a section in any editor and the next prompt you send uses it. A section you delete uses the built-in text again; delete the file to go back to the built-in prompt entirely.
+`/grammar prompt edit` writes `grammar-prompt.md` in your Claude Code folder (`~/.claude/`, or `$CLAUDE_CONFIG_DIR`) with a note and one `## name` section per part of the check prompt, each holding the built-in text. Edit a section and your next prompt uses it. Delete a section for its built-in text, or the file for the built-in prompt. An existing file is never overwritten.
 
-The same file can also live in a project: `/grammar prompt edit project` writes `.claude/grammar-prompt.md` in the project's root with the note only, so it overrides nothing until you add a section. Both files are read on every check and layered per section: a section in the project file beats the same section in the global file, which beats the built-in text. A section a file leaves out comes from the next level. The project file is part of the project, so if you commit it, whoever clones the repo gets it too, and their checks use your sections.
+`/grammar prompt edit project` does the same for the project: `.claude/grammar-prompt.md` in its root, with the note only, so it overrides nothing until you add a section. A project section beats the same global section, which beats the built-in text. The project file is part of the repo, so if you commit it, whoever clones it gets your sections.
 
 | Section | Sent | Markers |
 | --- | --- | --- |
@@ -127,11 +127,10 @@ The same file can also live in a project: `/grammar prompt edit project` writes 
 | `kind` | only when history is on | |
 | `natural` | only when the native-speaker line is on | |
 
-- Your settings keep choosing which parts are sent, so they work as before.
 - Text above the first `## ` heading, like the note, is never sent. Headings match without regard to case.
-- A problem (an unknown heading, a heading twice, an empty section, `ignore` without `{words}`, `answer` without `{why}` or `{kind}`, an unknown `{marker}`) never stops a check: the part falls back to the built-in text where it can't be used. Each problem shows as a toast once, led by the path of the file it is in, and is listed by `/grammar prompt`, which also shows the prompt your settings put together from the files.
-- The reply must stay the JSON the plugin parses, in the shape `answer` describes. A reply that doesn't parse, or whose fixes all lack `from` and `to`, shows as a failed check, and 3 in a row pause the checks; delete the section to recover.
-- The prompt is sent with every check, so a longer one costs more. `tools/import-history.ts` reads the global file too, but not a project's.
+- A problem (unknown or repeated heading, empty section, `ignore` without `{words}`, `answer` without `{why}` or `{kind}`, unknown `{marker}`) never stops a check; the part falls back to the built-in text. Each shows once as a toast with its file's path, and `/grammar prompt` lists them.
+- The reply must stay the JSON `answer` describes. A reply that doesn't parse, or whose fixes all lack `from` and `to`, is a failed check, and 3 in a row pause the checks; delete the section to recover.
+- The prompt is sent with every check, so a longer one costs more. `tools/import-history.ts` reads the global file, not a project's.
 
 ## Your mistakes over time
 

@@ -4,14 +4,10 @@ Each version is tagged `vX.Y.Z` and has a [GitHub release](https://github.com/ja
 
 ## 1.5.0 (2026-11-01)
 
-- Your own prompt, part by part. `grammar-prompt.md` in your Claude Code folder holds `## name` sections (`rules`, `spelling any|us|uk`, `ignore`, `answer`, `kind`, `natural`); each replaces that part of the built-in prompt, and a part with no section keeps the built-in text. Delete a section for its default, or the file for the built-in prompt. It is read on every check, so edits apply to your next prompt.
-- Your settings still choose which parts are sent: the spelling setting picks the spelling section, `ignore` goes only with ignore words (`{words}`), `answer` fills `{why}` and `{kind}` from `show_why` and history, `kind` only with history, `natural` only with the native-speaker line. Text above the first heading is never sent.
-- A problem in the file (unknown or repeated heading, empty section, missing `{words}`, `{why}` or `{kind}`, unknown `{marker}`) never stops a check: it shows as a toast once, and the part falls back to the built-in text.
-- `/grammar prompt` says which prompt is in use and which sections the file overrides, lists problems, and prints the prompt your settings put together. `/grammar prompt edit` writes the file with a note and every section, if it doesn't exist. `/grammar help` has a `Prompt:` line.
-- A project can have its own: `.claude/grammar-prompt.md` in its root, same format. Per section the project file beats the global one, which beats the built-in text; both are read on every check, and a problem is reported with its file's path. `/grammar prompt edit project` writes it with the note only (so it overrides nothing yet) and leaves an existing one alone. The note now lists every section heading as you type it. It is part of the repo, so whoever clones it gets it. `/grammar prompt` shows the source of each part.
-- `tools/import-history.ts` uses the global file too, followed by its batch instructions.
-- A reply whose fixes all lack `from` and `to` (an `answer` section that renamed them) is a failed check instead of a clean prompt.
-- Without the file the prompt is unchanged, so the costs in the README are too.
+- Your own prompt, part by part. `grammar-prompt.md` in your Claude Code folder holds `## name` sections (`rules`, `spelling any|us|uk`, `ignore`, `answer`, `kind`, `natural`); each replaces that part of the built-in prompt, and a part with no section keeps the built-in text. A project can have its own `.claude/grammar-prompt.md`; per section it beats the global file, which beats the built-in text. Both are read on every check, and `tools/import-history.ts` uses the global one.
+- Your settings still choose which parts are sent (spelling, ignore words, `show_why`, history, the native-speaker line). Text above the first heading is never sent.
+- A problem in a file (unknown or repeated heading, empty section, missing `{words}`, `{why}` or `{kind}`, unknown `{marker}`) never stops a check: it shows once as a toast with the file's path, and the part falls back to the built-in text. A reply whose fixes all lack `from` and `to` is a failed check, not a clean prompt.
+- `/grammar prompt` shows where each part comes from, the problems, and the prompt your settings put together. `/grammar prompt edit` writes the global file with a note and every section, `/grammar prompt edit project` the project's with the note only; neither overwrites a file. `/grammar help` has a `Prompt:` line. Without a file the prompt, and so its cost, is unchanged.
 
 ## 1.4.0 (2026-10-31)
 

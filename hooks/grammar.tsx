@@ -238,21 +238,20 @@ const migrate = async ($: EngineInterface) => {
 }
 
 /** The prompt parts the files override, where each comes from, and the problems found (each led by its file's path). */
-type CustomPrompt = { parts: Overrides; from: Partial<Record<PartName, { level: 'project' | 'global'; path: string }>>; problems: string[]; files: string[] }
+type UserPrompt = { parts: Overrides; from: Partial<Record<PartName, { level: 'project' | 'global'; path: string }>>; problems: string[] }
 
-/** One grammar-prompt.md: nothing when it is missing, unreadable or blank. */
+/** One grammar-prompt.md: nothing when it is missing or unreadable. */
 const readPromptFile = async ($: EngineInterface, path: string | undefined): Promise<ParsedPrompt | undefined> => {
   try {
-    const text = path !== undefined && (await $.fs.exists(path)) ? String(await $.fs.read(path)) : ''
-    return text.trim() === '' ? undefined : parsePromptFile(text)
+    return path !== undefined && (await $.fs.exists(path)) ? parsePromptFile(String(await $.fs.read(path))) : undefined
   } catch {
     return undefined
   }
 }
 
 /** The parts the project's and the global grammar-prompt.md override: a project section beats a global one. */
-const customPrompt = async ($: EngineInterface): Promise<CustomPrompt> => {
-  const mine: CustomPrompt = { parts: {}, from: {}, problems: [], files: [] }
+const userPrompt = async ($: EngineInterface): Promise<UserPrompt> => {
+  const mine: UserPrompt = { parts: {}, from: {}, problems: [] }
   const global = await promptFile($).catch(() => undefined)
   const project = await projectPromptFile($).catch(() => undefined)
   const files = [
@@ -272,24 +271,23 @@ const customPrompt = async ($: EngineInterface): Promise<CustomPrompt> => {
         mine.from[n] = { level, path }
       }
     }
-    mine.files.push(path)
     mine.problems.push(...parsed.problems.map(p => `${path}: ${p}`))
   }
   return mine
 }
 
 /** A toast, once, for each problem the prompt files have. */
-const reportPrompt = ($: EngineInterface, mine: CustomPrompt) => mine.problems.forEach(p => toastOnce($, `grammar: ${p}`))
+const reportPrompt = ($: EngineInterface, mine: UserPrompt) => mine.problems.forEach(p => toastOnce($, `grammar: ${p}`))
 
 /** The system prompt as the current settings, ignore words and prompt file build it. */
-const currentPrompt = async ($: EngineInterface, s: Settings, mine: CustomPrompt) => {
+const currentPrompt = async ($: EngineInterface, s: Settings, mine: UserPrompt) => {
   const lists = await loadLists($).catch(() => EMPTY)
   const kind = lists.history && (await read($, keepsHistory))
   return system({ natural: await read($, isNatural), dialect: s.dialect, showWhy: s.showWhy, kind, ignore: compileIgnore(lists.ignore).words }, mine.parts)
 }
 
 const ask = async ($: EngineInterface, s: Settings, text: string, natural: boolean, kind: boolean, ignore: Ignore) => {
-  const mine = await customPrompt($)
+  const mine = await userPrompt($)
   reportPrompt($, mine)
   const request = {
     model: s.model,
@@ -560,14 +558,22 @@ const historyCommand = async ($: EngineInterface, sub: string) => {
   ].join('\n')
 }
 
-const promptCommand = async ($: EngineInterface, s: Settings, sub: string, which: string) => {
-  if ((sub !== '' && sub !== 'edit') || (sub === 'edit' && which !== '' && which !== 'project') || (sub === '' && which !== '')) {
-    return USAGE
+const promptCommand = async ($: EngineInterface, s: Settings, args: string) => {
+  switch (args) {
+    case '':
+      return showPrompt($, s)
+    case 'edit':
+      return editPrompt($)
+    case 'edit project':
+      return editProjectPrompt($)
+    default:
+      return USAGE
   }
-  if (sub === 'edit') {
-    return which === 'project' ? editProjectPrompt($) : editPrompt($)
-  }
-  const mine = await customPrompt($)
+}
+
+/** /grammar prompt: where each part comes from, the problems, and the prompt the settings put together. */
+const showPrompt = async ($: EngineInterface, s: Settings) => {
+  const mine = await userPrompt($)
   const overridden = PART_NAMES.some(n => mine.from[n] !== undefined)
   return [
     overridden ? 'Prompt: yours' : 'Prompt: built-in',
@@ -600,11 +606,7 @@ const editProjectPrompt = async ($: EngineInterface) => {
     return 'No project folder to keep a grammar-prompt.md in.'
   }
   if (!(await $.fs.exists(path))) {
-    try {
-      await $.fs.write(path, `${PROMPT_HEADER}\n`)
-    } catch (err) {
-      return `Could not write ${path}: ${message(err)}`
-    }
+    await $.fs.write(path, `${PROMPT_HEADER}\n`)
   }
   return [
     `This project's prompt file: ${path}`,
@@ -615,8 +617,9 @@ const editProjectPrompt = async ($: EngineInterface) => {
 
 /** The help's prompt line: the files that override any part, else built-in. */
 const promptLine = async ($: EngineInterface) => {
-  const mine = await customPrompt($)
-  const paths = mine.files.filter(f => PART_NAMES.some(n => mine.from[n]?.path === f))
+  const mine = await userPrompt($)
+  // 'global' sorts before 'project'.
+  const paths = [...new Set(Object.values(mine.from).sort((a, b) => a.level.localeCompare(b.level)).map(f => f.path))]
   return `Prompt: ${paths.length > 0 ? `yours (${paths.join(', ')})` : 'built-in'}.`
 }
 
@@ -702,7 +705,7 @@ export const register: Register = (on, options) => {
         return { text: await historyCommand($, sub) }
       }
       case 'prompt':
-        return { text: await promptCommand($, s, sub, (rest[1] ?? '').toLowerCase()) }
+        return { text: await promptCommand($, s, rest.join(' ').toLowerCase()) }
       case 'ignore': {
         const words = entriesFrom(rest.slice(1).join(' '))
         if (sub === '' || sub === 'list') {

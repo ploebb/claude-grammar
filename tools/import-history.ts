@@ -62,7 +62,7 @@ const loadSettings = (): Settings => {
 }
 
 /** The parts the global grammar-prompt.md overrides, as the plugin reads them; none when it is missing, unreadable or blank. */
-const customParts = (): Overrides => {
+const userParts = (): Overrides => {
   try {
     return parsePromptFile(readFileSync(join(configDir, 'grammar-prompt.md'), 'utf8')).parts
   } catch {
@@ -202,7 +202,7 @@ const main = async () => {
   }
 
   const global = readLists(join(configDir, 'grammar.json'))
-  const sys = `${system({ natural: false, dialect: s.dialect, showWhy: s.showWhy, kind: true, ignore: compileIgnore(global.ignore).words }, customParts())}\n${BATCH}`
+  const sys = `${system({ natural: false, dialect: s.dialect, showWhy: s.showWhy, kind: true, ignore: compileIgnore(global.ignore).words }, userParts())}\n${BATCH}`
   const results = new Map<number, GrammarFix[] | null>()
   let cost = 0
   let done = 0
