@@ -55,8 +55,8 @@ A prompt with no mistakes gets a green `✓` before it instead. From the third c
 | `/grammar ignore` | Shows the ignore and skip lists and the files they're in. |
 | `/grammar stats [period]` | Your mistakes by kind, the fixes you keep repeating, and whether you're making fewer. No model call. |
 | `/grammar review [period]` | A summary card, then the 3 to 5 habits behind most of your mistakes from one Sonnet call, with your own fixes as examples. Needs 20 kept fixes in the period. |
-| `/grammar prompt` | Shows whether your own prompt file or the built-in prompt is in use, the file's path, and the full system prompt in use. |
-| `/grammar prompt edit` | Writes `grammar-prompt.md` with the built-in prompt if the file doesn't exist, and tells you where it is. |
+| `/grammar prompt` | Shows whether the built-in prompt or your `grammar-prompt.md` is in use, which sections it overrides, any problems in it, and the system prompt your settings put together. |
+| `/grammar prompt edit` | Writes `grammar-prompt.md` with a section per prompt part, if the file doesn't exist, and tells you where it is. |
 | `/grammar history on\|off` | Keeps your fixes, or stops keeping new ones. |
 | `/grammar history clear` | Empties the history file. |
 | `/grammar history` | Shows whether it's on, how many fixes are kept, and where. |
@@ -113,12 +113,22 @@ The native-speaker line is rare on purpose. It shows only when a sentence is cle
 
 ## Your own prompt
 
-The whole system prompt can be your own text. Run `/grammar prompt edit`: it writes `grammar-prompt.md` in your Claude Code folder (`~/.claude/`, or `$CLAUDE_CONFIG_DIR`) with the built-in prompt as your settings and ignore words build it, and leaves it alone if it exists. Edit it in any editor; the next prompt you send uses it. Delete the file to go back to the built-in prompt. `/grammar prompt` shows which one is in use.
+You can replace parts of the check prompt. Run `/grammar prompt edit`: it writes `grammar-prompt.md` in your Claude Code folder (`~/.claude/`, or `$CLAUDE_CONFIG_DIR`) with a short note and one `## name` section per part, each holding the built-in text. It leaves a file that exists alone. Edit a section in any editor and the next prompt you send uses it. A section you delete uses the built-in text again; delete the file to go back to the built-in prompt entirely.
 
-- While the file holds any text, it is sent as the complete system prompt, verbatim: nothing is added, stripped or cut. An empty or whitespace-only file counts as no file.
-- So the settings that shape the prompt (`dialect`, `natural`, `show_why`, the ignore words told to the model, the kind labels) don't change it. Ignore words are still filtered from the fixes locally, and natural lines are still hidden when `natural` is off.
-- The reply must keep the JSON shape the plugin parses, as in the built-in prompt. A reply that doesn't parse shows as a failed check, and 3 in a row pause the checks; delete the file to recover.
-- The prompt is sent with every check, so a longer one costs more. `tools/import-history.ts` uses the file too (followed by its batch instructions).
+| Section | Sent | Markers |
+| --- | --- | --- |
+| `rules` | always | |
+| `spelling any`, `spelling us`, `spelling uk` | the one your `dialect` setting picks | |
+| `ignore` | only when you have ignore words | `{words}`: the quoted words, comma-separated |
+| `answer` | always | `{why}` adds the `why` field when `show_why` is on; `{kind}` adds the `kind` field when history is on |
+| `kind` | only when history is on | |
+| `natural` | only when the native-speaker line is on | |
+
+- Your settings keep choosing which parts are sent, so they work as before.
+- Text above the first `## ` heading, like the note, is never sent. Headings match without regard to case.
+- A problem (an unknown heading, a heading twice, an empty section, `ignore` without `{words}`, `answer` without `{why}` or `{kind}`, an unknown `{marker}`) never stops a check: the part falls back to the built-in text where it can't be used. Each problem shows as a toast once and is listed by `/grammar prompt`, which also shows the prompt your settings put together from the file.
+- The reply must stay the JSON the plugin parses, in the shape `answer` describes. A reply that doesn't parse shows as a failed check, and 3 in a row pause the checks; delete the section to recover.
+- The prompt is sent with every check, so a longer one costs more. `tools/import-history.ts` reads the file too.
 
 ## Your mistakes over time
 

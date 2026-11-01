@@ -15,7 +15,8 @@ import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 
 import type { GrammarFix } from '../types'
-import { BATCH, keepFixes, parseBatch, system, typedPart } from '../hooks/check'
+import { BATCH, keepFixes, parseBatch, parsePromptFile, system, typedPart } from '../hooks/check'
+import type { Overrides } from '../hooks/check'
 import { EMPTY, compileIgnore, compileSkip, cut, mergeLists, parseLists, settingsFrom, wordCount } from '../hooks/config'
 import type { Lists, Settings } from '../hooks/config'
 import { EMPTY_HISTORY, KEEP_DAYS, dayOf, historyText, importWindow, merge, parseHistory, record } from '../hooks/history'
@@ -57,13 +58,12 @@ const loadSettings = (): Settings => {
   }
 }
 
-/** The text of grammar-prompt.md, trimmed, as the plugin reads it; undefined when missing, unreadable or blank. */
-const customPrompt = (): string | undefined => {
+/** The parts grammar-prompt.md overrides, as the plugin reads them; none when it is missing, unreadable or blank. */
+const customParts = (): Overrides => {
   try {
-    const text = readFileSync(join(configDir, 'grammar-prompt.md'), 'utf8').trim()
-    return text === '' ? undefined : text
+    return parsePromptFile(readFileSync(join(configDir, 'grammar-prompt.md'), 'utf8')).parts
   } catch {
-    return undefined
+    return {}
   }
 }
 
@@ -199,8 +199,7 @@ const main = async () => {
   }
 
   const global = readLists(join(configDir, 'grammar.json'))
-  const mine = customPrompt()
-  const sys = `${mine ?? system({ natural: false, dialect: s.dialect, showWhy: s.showWhy, kind: true, ignore: compileIgnore(global.ignore).words })}\n${BATCH}`
+  const sys = `${system({ natural: false, dialect: s.dialect, showWhy: s.showWhy, kind: true, ignore: compileIgnore(global.ignore).words }, customParts())}\n${BATCH}`
   const results = new Map<number, GrammarFix[] | null>()
   let cost = 0
   let done = 0

@@ -17,7 +17,8 @@ import {
   wordCount,
 } from './config'
 import type { Ignore, Lists, Settings } from './config'
-import { keepFixes, parseReply, system, typedPart } from './check'
+import { PART_NAMES, keepFixes, parsePromptFile, parseReply, promptFileText, system, typedPart } from './check'
+import type { ParsedPrompt } from './check'
 import {
   EMPTY_HISTORY,
   KEEP_DAYS,
@@ -106,7 +107,7 @@ const globalFile = ($: EngineInterface) => configFile($, 'grammar.json')
 /** Where the fixes are kept for /grammar stats and /grammar review. */
 const historyFile = ($: EngineInterface) => configFile($, 'grammar-history.json')
 
-/** The user's own system prompt; used whole while it holds any text. */
+/** The user's own prompt parts: `## ` sections that replace parts of the built-in prompt. */
 const promptFile = ($: EngineInterface) => configFile($, 'grammar-prompt.md')
 
 /** The project's grammar.json, in its .claude folder. */
@@ -233,28 +234,36 @@ const migrate = async ($: EngineInterface) => {
   return moved
 }
 
-/** The text of grammar-prompt.md, trimmed; undefined when the file is missing, unreadable or blank. */
-const customPrompt = async ($: EngineInterface): Promise<string | undefined> => {
+/** The parts grammar-prompt.md overrides and its problems; no parts when it is missing, unreadable or blank. */
+const customPrompt = async ($: EngineInterface): Promise<ParsedPrompt> => {
   try {
     const path = await promptFile($)
-    const text = path !== undefined && (await $.fs.exists(path)) ? String(await $.fs.read(path)).trim() : ''
-    return text === '' ? undefined : text
+    const text = path !== undefined && (await $.fs.exists(path)) ? String(await $.fs.read(path)) : ''
+    return text.trim() === '' ? { parts: {}, problems: [] } : parsePromptFile(text)
   } catch {
-    return undefined
+    return { parts: {}, problems: [] }
   }
 }
 
-/** The built-in system prompt as the current settings and ignore words build it. */
-const builtInPrompt = async ($: EngineInterface, s: Settings) => {
+/** A toast, once, for each problem the prompt file has. */
+const reportPrompt = async ($: EngineInterface, mine: ParsedPrompt) => {
+  const path = await promptFile($)
+  mine.problems.forEach(p => toastOnce($, `grammar: ${path}: ${p}`))
+}
+
+/** The system prompt as the current settings, ignore words and prompt file build it. */
+const currentPrompt = async ($: EngineInterface, s: Settings, mine: ParsedPrompt) => {
   const lists = await loadLists($).catch(() => EMPTY)
   const kind = lists.history && (await read($, keepsHistory))
-  return system({ natural: await read($, isNatural), dialect: s.dialect, showWhy: s.showWhy, kind, ignore: compileIgnore(lists.ignore).words })
+  return system({ natural: await read($, isNatural), dialect: s.dialect, showWhy: s.showWhy, kind, ignore: compileIgnore(lists.ignore).words }, mine.parts)
 }
 
 const ask = async ($: EngineInterface, s: Settings, text: string, natural: boolean, kind: boolean, ignore: Ignore) => {
+  const mine = await customPrompt($)
+  await reportPrompt($, mine)
   const request = {
     model: s.model,
-    system: (await customPrompt($)) ?? system({ natural, dialect: s.dialect, showWhy: s.showWhy, kind, ignore: ignore.words }),
+    system: system({ natural, dialect: s.dialect, showWhy: s.showWhy, kind, ignore: ignore.words }, mine.parts),
     prompt: cut(text, s.maxChars),
     maxTokens: 4096,
     effort: s.effort,
@@ -531,20 +540,25 @@ const promptCommand = async ($: EngineInterface, s: Settings, sub: string) => {
   }
   if (sub === 'edit') {
     if (!(await $.fs.exists(path))) {
-      await $.fs.write(path, `${await builtInPrompt($, s)}\n`)
+      await $.fs.write(path, promptFileText())
     }
-    return `Your prompt file: ${path}\nEdit it in any editor; changes apply to your next prompt. Delete the file to go back to the built-in prompt.`
+    return `Your prompt file: ${path}\nEdit the sections in any editor; changes apply to your next prompt. Delete a section to get its built-in text back, or the file to go back to the built-in prompt.`
   }
   const mine = await customPrompt($)
+  const names = PART_NAMES.filter(n => mine.parts[n] !== undefined)
   return [
-    mine === undefined ? `Prompt: built-in (${path} does not exist or is empty).` : `Prompt: yours, from ${path}.`,
+    names.length > 0 ? `Prompt: yours, from ${path} (sections: ${names.join(', ')})` : `Prompt: built-in (${path} does not exist or overrides no part).`,
+    ...(mine.problems.length > 0 ? ['', 'Problems:', ...mine.problems.map(p => `- ${p}`)] : []),
     '',
-    mine ?? (await builtInPrompt($, s)),
+    await currentPrompt($, s, mine),
   ].join('\n')
 }
 
-/** The help's prompt line: the file's path while it is in use, else built-in. */
-const promptLine = async ($: EngineInterface) => `Prompt: ${(await customPrompt($)) === undefined ? 'built-in' : `yours (${await promptFile($)})`}.`
+/** The help's prompt line: the file's path while it overrides any part, else built-in. */
+const promptLine = async ($: EngineInterface) => {
+  const mine = await customPrompt($)
+  return `Prompt: ${PART_NAMES.some(n => mine.parts[n] !== undefined) ? `yours (${await promptFile($)})` : 'built-in'}.`
+}
 
 /** The help's history line: on or off, and how many fixes are kept. */
 const historyLine = async ($: EngineInterface) => {

@@ -4,11 +4,12 @@ Each version is tagged `vX.Y.Z` and has a [GitHub release](https://github.com/ja
 
 ## 1.5.0 (2026-11-01)
 
-- Your own prompt. If `grammar-prompt.md` exists in your Claude Code folder and holds any text, that text is the whole system prompt, verbatim: nothing is added, stripped or cut. It is read on every check, so edits apply to your next prompt. Delete the file to go back to the built-in prompt; an empty file counts as no file.
-- `/grammar prompt` says which prompt is in use, the file's path, and prints the full prompt. `/grammar prompt edit` writes the file with the built-in prompt as your settings build it, if it doesn't exist. `/grammar help` has a `Prompt:` line.
-- While the file is in use, the settings that shape the prompt don't change it. Ignore words are still filtered from the fixes, and the reply must keep the JSON shape the plugin parses.
+- Your own prompt, part by part. `grammar-prompt.md` in your Claude Code folder holds `## name` sections (`rules`, `spelling any|us|uk`, `ignore`, `answer`, `kind`, `natural`); each replaces that part of the built-in prompt, and a part with no section keeps the built-in text. Delete a section for its default, or the file for the built-in prompt. It is read on every check, so edits apply to your next prompt.
+- Your settings still choose which parts are sent: the spelling setting picks the spelling section, `ignore` goes only with ignore words (`{words}`), `answer` fills `{why}` and `{kind}` from `show_why` and history, `kind` only with history, `natural` only with the native-speaker line. Text above the first heading is never sent.
+- A problem in the file (unknown or repeated heading, empty section, missing `{words}`, `{why}` or `{kind}`, unknown `{marker}`) never stops a check: it shows as a toast once, and the part falls back to the built-in text.
+- `/grammar prompt` says which prompt is in use and which sections the file overrides, lists problems, and prints the prompt your settings put together. `/grammar prompt edit` writes the file with a note and every section, if it doesn't exist. `/grammar help` has a `Prompt:` line.
 - `tools/import-history.ts` uses the file too, followed by its batch instructions.
-- The built-in prompt is unchanged, so the costs in the README are too.
+- Without the file the prompt is unchanged, so the costs in the README are too.
 
 ## 1.4.0 (2026-10-31)
 
