@@ -37,6 +37,7 @@ declare module 'claude-code' {
       grammarNatural: boolean
       // Fixes are kept in grammar-history.json for /grammar stats and /grammar review.
       grammarHistory: boolean
+      grammarCustomPrompt: boolean
       // Reviews shown this session, newest first, so their rows can draw the panel.
       grammarReviews: GrammarReview[]
       grammarChecks: GrammarCheck[]

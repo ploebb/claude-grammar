@@ -2,6 +2,14 @@
 
 Each version is tagged `vX.Y.Z` and has a [GitHub release](https://github.com/jaklimoff/claude-grammar/releases) with its section below as the notes. Bump `version` in `.claude-plugin/plugin.json` on every change to what ships: installed copies update only when it changes. How releases work: [CONTRIBUTING.md](CONTRIBUTING.md#versions-and-releases).
 
+## 1.5.0 (2026-11-01)
+
+- Your own prompt. `/grammar prompt edit` writes `grammar-prompt.md` in your Claude Code folder with the built-in rules and turns the new `custom_prompt` setting ("Use my prompt", off by default) on; edit the file in any editor, terminal or desktop app, and the next prompt uses it. HTML comments in it are not sent, and at most 8000 characters are. Only the rules are yours: the spelling line, your ignore words, the answer format and the native-speaker instructions are still added by the plugin.
+- A file that is missing, unreadable or empty falls back to the built-in rules, with one toast saying why.
+- `/grammar prompt` shows which prompt is in use, the file and the rules text; `custom` and `default` switch (the file is kept); `reset` saves your file as `grammar-prompt.md.bak` and rewrites it with the built-in rules; `show-default` prints them. `/grammar help` says which prompt is in use.
+- `tools/import-history.ts` uses your rules too while `custom_prompt` is on.
+- The built-in prompt is unchanged, so the costs in the README are too.
+
 ## 1.4.0 (2026-10-31)
 
 - A prompt with no mistakes gets a green check before it. From 3 clean prompts in a row, a line under it says how many (`3 in a row`). A fix or a native-speaker line starts the count over; a failed check or another language leaves it as it is. The count is for the session.

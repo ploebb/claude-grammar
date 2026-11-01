@@ -21,6 +21,7 @@ export type Settings = {
   desktop: DesktopMode
   history: boolean
   clean: boolean
+  customPrompt: boolean
 }
 
 const pick = <T extends string>(value: unknown, allowed: readonly T[], fallback: T): T =>
@@ -43,6 +44,7 @@ export const settingsFrom = (o: PluginOptions): Settings => ({
   desktop: pick(o.desktop, ['band', 'line', 'toast', 'off'] as const, 'band'),
   history: o.history !== false,
   clean: o.clean !== false,
+  customPrompt: o.custom_prompt === true,
 })
 
 /**

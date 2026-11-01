@@ -1,6 +1,6 @@
 {
   "name": "grammar",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Checks the English of each prompt you send to Claude Code, shows the fixes under it, and keeps them so /grammar stats and /grammar review show the mistakes you make most. Sends each prompt you type to Haiku (one small call per prompt), and the kept fixes to Sonnet when you run /grammar review, through your own Claude Code session",
   "author": {
     "name": "Jack Klimov",
@@ -104,6 +104,12 @@
       "title": "Mark clean prompts",
       "description": "A green check before a prompt with no mistakes, and from 3 in a row, how many in a row. In the desktop app it shows in the band, the transcript line or a toast, as the desktop setting says.",
       "default": true
+    },
+    "custom_prompt": {
+      "type": "boolean",
+      "title": "Use my prompt",
+      "description": "Check with the rules in grammar-prompt.md in your Claude Code folder instead of the built-in ones. /grammar prompt edit writes the file and turns this on; /grammar prompt default turns it off; /grammar prompt reset rewrites the file with the built-in rules.",
+      "default": false
     }
   },
   "license": "MIT",
