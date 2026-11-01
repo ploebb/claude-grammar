@@ -15,7 +15,7 @@ import { join } from 'node:path'
 import { createInterface } from 'node:readline'
 
 import type { GrammarFix } from '../types'
-import { BATCH, RULES_CAP, customRules, keepFixes, parseBatch, system, typedPart } from '../hooks/check'
+import { BATCH, keepFixes, parseBatch, system, typedPart } from '../hooks/check'
 import { EMPTY, compileIgnore, compileSkip, cut, mergeLists, parseLists, settingsFrom, wordCount } from '../hooks/config'
 import type { Lists, Settings } from '../hooks/config'
 import { EMPTY_HISTORY, KEEP_DAYS, dayOf, historyText, importWindow, merge, parseHistory, record } from '../hooks/history'
@@ -57,22 +57,12 @@ const loadSettings = (): Settings => {
   }
 }
 
-/** The rules from grammar-prompt.md while `custom_prompt` is on, as the plugin reads them; undefined means the built-in ones. */
-const loadRules = (s: Settings): string | undefined => {
-  if (!s.customPrompt) {
-    return undefined
-  }
-  const path = join(configDir, 'grammar-prompt.md')
+/** The text of grammar-prompt.md, trimmed, as the plugin reads it; undefined when missing, unreadable or blank. */
+const customPrompt = (): string | undefined => {
   try {
-    const c = customRules(readFileSync(path, 'utf8'))
-    if (c.rules === undefined) {
-      console.error(`  ${path} holds no rules; the built-in rules are used`)
-    } else if (c.cut) {
-      console.error(`  ${path} is longer than ${RULES_CAP} characters; only the first ${RULES_CAP} are used`)
-    }
-    return c.rules
-  } catch (e) {
-    console.error(`  ${path} cannot be read (${e instanceof Error ? e.message : String(e)}); the built-in rules are used`)
+    const text = readFileSync(join(configDir, 'grammar-prompt.md'), 'utf8').trim()
+    return text === '' ? undefined : text
+  } catch {
     return undefined
   }
 }
@@ -209,7 +199,8 @@ const main = async () => {
   }
 
   const global = readLists(join(configDir, 'grammar.json'))
-  const sys = `${system({ natural: false, dialect: s.dialect, showWhy: s.showWhy, kind: true, ignore: compileIgnore(global.ignore).words, rules: loadRules(s) })}\n${BATCH}`
+  const mine = customPrompt()
+  const sys = `${mine ?? system({ natural: false, dialect: s.dialect, showWhy: s.showWhy, kind: true, ignore: compileIgnore(global.ignore).words })}\n${BATCH}`
   const results = new Map<number, GrammarFix[] | null>()
   let cost = 0
   let done = 0

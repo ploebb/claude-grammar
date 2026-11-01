@@ -4,10 +4,10 @@ Each version is tagged `vX.Y.Z` and has a [GitHub release](https://github.com/ja
 
 ## 1.5.0 (2026-11-01)
 
-- Your own prompt. `/grammar prompt edit` writes `grammar-prompt.md` in your Claude Code folder with the built-in rules and turns the new `custom_prompt` setting ("Use my prompt", off by default) on; edit the file in any editor, terminal or desktop app, and the next prompt uses it. HTML comments in it are not sent, and at most 8000 characters are. Only the rules are yours: the spelling line, your ignore words, the answer format and the native-speaker instructions are still added by the plugin.
-- A file that is missing, unreadable or empty falls back to the built-in rules, with one toast saying why.
-- `/grammar prompt` shows which prompt is in use, the file and the rules text; `custom` and `default` switch (the file is kept); `reset` saves your file as `grammar-prompt.md.bak` and rewrites it with the built-in rules; `show-default` prints them. `/grammar help` says which prompt is in use.
-- `tools/import-history.ts` uses your rules too while `custom_prompt` is on.
+- Your own prompt. If `grammar-prompt.md` exists in your Claude Code folder and holds any text, that text is the whole system prompt, verbatim: nothing is added, stripped or cut. It is read on every check, so edits apply to your next prompt. Delete the file to go back to the built-in prompt; an empty file counts as no file.
+- `/grammar prompt` says which prompt is in use, the file's path, and prints the full prompt. `/grammar prompt edit` writes the file with the built-in prompt as your settings build it, if it doesn't exist. `/grammar help` has a `Prompt:` line.
+- While the file is in use, the settings that shape the prompt don't change it. Ignore words are still filtered from the fixes, and the reply must keep the JSON shape the plugin parses.
+- `tools/import-history.ts` uses the file too, followed by its batch instructions.
 - The built-in prompt is unchanged, so the costs in the README are too.
 
 ## 1.4.0 (2026-10-31)

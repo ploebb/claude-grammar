@@ -17,7 +17,7 @@ import {
   wordCount,
 } from './config'
 import type { Ignore, Lists, Settings } from './config'
-import { DEFAULT_RULES, RULES_CAP, customRules, keepFixes, parseReply, system, typedPart } from './check'
+import { keepFixes, parseReply, system, typedPart } from './check'
 import {
   EMPTY_HISTORY,
   KEEP_DAYS,
@@ -40,7 +40,6 @@ import type { History, Summary } from './history'
 const isOn = atom({ plugin: 'grammar', key: 'grammarOn' } as const, true)
 const isNatural = atom({ plugin: 'grammar', key: 'grammarNatural' } as const, true)
 const keepsHistory = atom({ plugin: 'grammar', key: 'grammarHistory' } as const, true)
-const usesCustom = atom({ plugin: 'grammar', key: 'grammarCustomPrompt' } as const, false)
 const reviews = atom({ plugin: 'grammar', key: 'grammarReviews' } as const, [] as GrammarReview[])
 // The latest checks, newest first, each with the prompt it checked.
 const checks = atom({ plugin: 'grammar', key: 'grammarChecks' } as const, [] as GrammarCheck[])
@@ -107,7 +106,7 @@ const globalFile = ($: EngineInterface) => configFile($, 'grammar.json')
 /** Where the fixes are kept for /grammar stats and /grammar review. */
 const historyFile = ($: EngineInterface) => configFile($, 'grammar-history.json')
 
-/** The user's own rules for the check. */
+/** The user's own system prompt; used whole while it holds any text. */
 const promptFile = ($: EngineInterface) => configFile($, 'grammar-prompt.md')
 
 /** The project's grammar.json, in its .claude folder. */
@@ -123,17 +122,6 @@ const toastOnce = ($: EngineInterface, note: string, timeoutMs?: number) => {
     $.ui.toast(note, timeoutMs === undefined ? undefined : { timeoutMs })
   }
 }
-
-// What grammar-prompt.md starts with when the plugin writes it; stripped before the rules are sent.
-const PROMPT_HEADER = `<!--
-This text replaces the built-in proofreading rules. It is sent as the start of the system prompt on every check;
-the plugin adds the spelling line, your ignore words, the answer format and the native-speaker instructions after it.
-Lines inside an HTML comment like this one are not sent. Changes apply to your next prompt.
-/grammar prompt default switches back to the built-in rules (this file is kept).
-/grammar prompt reset rewrites this file with the built-in rules (the old one is kept as grammar-prompt.md.bak).
--->`
-
-const promptFileText = (rules: string) => `${PROMPT_HEADER}\n\n${rules}\n`
 
 /** One file's lists: empty when it is missing; a toast, once, when it does not parse. */
 const readLists = async ($: EngineInterface, path: string): Promise<Lists> => {
@@ -245,37 +233,28 @@ const migrate = async ($: EngineInterface) => {
   return moved
 }
 
-/**
- * The rules to check with: the file's while custom is on and it holds any, else the built-in ones. `note` says why the
- * built-in ones stand in, or that the file was cut.
- */
-const loadRules = async ($: EngineInterface, custom: boolean): Promise<{ rules: string; custom: boolean; note?: string }> => {
-  const builtIn = (note: string) => ({ rules: DEFAULT_RULES, custom: false, note })
-  if (!custom) {
-    return { rules: DEFAULT_RULES, custom: false }
-  }
-  const path = await promptFile($)
-  if (path === undefined) {
-    return builtIn('No home folder to read grammar-prompt.md from, so the built-in rules are used.')
-  }
+/** The text of grammar-prompt.md, trimmed; undefined when the file is missing, unreadable or blank. */
+const customPrompt = async ($: EngineInterface): Promise<string | undefined> => {
   try {
-    if (!(await $.fs.exists(path))) {
-      return builtIn(`${path} is missing, so the built-in rules are used. /grammar prompt edit creates it.`)
-    }
-    const c = customRules(String(await $.fs.read(path)))
-    if (c.rules === undefined) {
-      return builtIn(`${path} holds no rules, so the built-in rules are used. /grammar prompt reset refills it.`)
-    }
-    return { rules: c.rules, custom: true, ...(c.cut ? { note: `${path} is longer than ${RULES_CAP} characters: only the first ${RULES_CAP} are used.` } : {}) }
-  } catch (err) {
-    return builtIn(`${path} cannot be read (${message(err)}), so the built-in rules are used.`)
+    const path = await promptFile($)
+    const text = path !== undefined && (await $.fs.exists(path)) ? String(await $.fs.read(path)).trim() : ''
+    return text === '' ? undefined : text
+  } catch {
+    return undefined
   }
 }
 
-const ask = async ($: EngineInterface, s: Settings, text: string, natural: boolean, kind: boolean, ignore: Ignore, rules: string) => {
+/** The built-in system prompt as the current settings and ignore words build it. */
+const builtInPrompt = async ($: EngineInterface, s: Settings) => {
+  const lists = await loadLists($).catch(() => EMPTY)
+  const kind = lists.history && (await read($, keepsHistory))
+  return system({ natural: await read($, isNatural), dialect: s.dialect, showWhy: s.showWhy, kind, ignore: compileIgnore(lists.ignore).words })
+}
+
+const ask = async ($: EngineInterface, s: Settings, text: string, natural: boolean, kind: boolean, ignore: Ignore) => {
   const request = {
     model: s.model,
-    system: system({ natural, dialect: s.dialect, showWhy: s.showWhy, kind, ignore: ignore.words, rules }),
+    system: (await customPrompt($)) ?? system({ natural, dialect: s.dialect, showWhy: s.showWhy, kind, ignore: ignore.words }),
     prompt: cut(text, s.maxChars),
     maxTokens: 4096,
     effort: s.effort,
@@ -299,11 +278,7 @@ const run = async ($: EngineInterface, s: Settings, id: number, text: string) =>
   }
   const ignore = compileIgnore(lists.ignore)
   const history = lists.history && (await read($, keepsHistory))
-  const loaded = await loadRules($, await read($, usesCustom))
-  if (loaded.note !== undefined) {
-    toastOnce($, `grammar: ${loaded.note}`)
-  }
-  const r = await ask($, s, text, await read($, isNatural), history, ignore, loaded.rules)
+  const r = await ask($, s, text, await read($, isNatural), history, ignore)
   let result: GrammarCheck | null
   if (!r.isAnswered) {
     result = { id, text, status: 'error', fixes: [], error: r.reason }
@@ -406,7 +381,7 @@ const USAGE = `/grammar help: this list, and what is on now
 /grammar stats [7d|30d|since 2026-10-01]: your most frequent mistakes, from the kept fixes
 /grammar review [7d|30d|since 2026-10-01]: a summary, then advice on them from Sonnet (one call, from ${REVIEW_FROM} fixes)
 /grammar history [on|off|clear]: keeping fixes for stats and review
-/grammar prompt [edit|custom|default|reset|show-default]: the check's rules; edit your own in grammar-prompt.md
+/grammar prompt [edit]: the system prompt in use; edit writes grammar-prompt.md to change it
 More settings (model, spelling, minimum words, icons) are under /config.`
 
 /** Adds or removes entries in the global grammar.json, keeping whatever else the file holds. */
@@ -546,69 +521,30 @@ const historyCommand = async ($: EngineInterface, sub: string) => {
   ].join('\n')
 }
 
-/** Writes grammar-prompt.md with the built-in rules when it is missing. The path, or undefined without a home folder. */
-const ensurePromptFile = async ($: EngineInterface) => {
-  const path = await promptFile($)
-  if (path !== undefined && !(await $.fs.exists(path))) {
-    await $.fs.write(path, promptFileText(DEFAULT_RULES))
+const promptCommand = async ($: EngineInterface, s: Settings, sub: string) => {
+  if (sub !== '' && sub !== 'edit') {
+    return USAGE
   }
-  return path
+  const path = await promptFile($)
+  if (path === undefined) {
+    return 'No home folder to keep grammar-prompt.md in.'
+  }
+  if (sub === 'edit') {
+    if (!(await $.fs.exists(path))) {
+      await $.fs.write(path, `${await builtInPrompt($, s)}\n`)
+    }
+    return `Your prompt file: ${path}\nEdit it in any editor; changes apply to your next prompt. Delete the file to go back to the built-in prompt.`
+  }
+  const mine = await customPrompt($)
+  return [
+    mine === undefined ? `Prompt: built-in (${path} does not exist or is empty).` : `Prompt: yours, from ${path}.`,
+    '',
+    mine ?? (await builtInPrompt($, s)),
+  ].join('\n')
 }
 
-const promptCommand = async ($: EngineInterface, sub: string) => {
-  const NO_HOME = 'No home folder to keep grammar-prompt.md in.'
-  switch (sub) {
-    case '': {
-      const loaded = await loadRules($, await read($, usesCustom))
-      const path = await promptFile($)
-      const exists = path !== undefined && (await $.fs.exists(path))
-      return [
-        `Prompt: ${loaded.custom ? 'custom (your rules)' : 'default (built-in rules)'}.`,
-        `File: ${path ?? 'none (no home folder)'}${exists ? '' : ' (does not exist yet)'}`,
-        ...(loaded.note === undefined ? [] : [loaded.note]),
-        '',
-        'Rules in use (the spelling line, ignore words, answer format and native-speaker instructions are added after them):',
-        loaded.rules,
-      ].join('\n')
-    }
-    case 'show-default':
-      return `The built-in rules:\n${DEFAULT_RULES}`
-    case 'edit':
-    case 'custom': {
-      const path = await ensurePromptFile($)
-      if (path === undefined) {
-        return NO_HOME
-      }
-      await update($, usesCustom, () => true)
-      const why = await persist($, 'custom_prompt', true)
-      return (
-        (sub === 'edit'
-          ? `Your prompt is on. Edit ${path} in any editor; changes apply to your next prompt. /grammar prompt default goes back to the built-in rules.`
-          : `Your prompt is on: the rules in ${path} are used. /grammar prompt default goes back to the built-in rules.`) + sessionOnly(why)
-      )
-    }
-    case 'default': {
-      await update($, usesCustom, () => false)
-      const why = await persist($, 'custom_prompt', false)
-      const path = (await promptFile($)) ?? 'grammar-prompt.md'
-      return `Default prompt: the built-in rules are used. ${path} is kept; /grammar prompt custom uses it again.${sessionOnly(why)}`
-    }
-    case 'reset': {
-      const path = await promptFile($)
-      if (path === undefined) {
-        return NO_HOME
-      }
-      const had = await $.fs.exists(path)
-      if (had) {
-        await $.fs.write(`${path}.bak`, String(await $.fs.read(path)))
-      }
-      await $.fs.write(path, promptFileText(DEFAULT_RULES))
-      return `${path} holds the built-in rules again. ${had ? `The file as it was is in ${path}.bak.` : 'It did not exist, so there is no backup.'} The switch is as it was: /grammar prompt shows which prompt is in use.`
-    }
-    default:
-      return USAGE
-  }
-}
+/** The help's prompt line: the file's path while it is in use, else built-in. */
+const promptLine = async ($: EngineInterface) => `Prompt: ${(await customPrompt($)) === undefined ? 'built-in' : `yours (${await promptFile($)})`}.`
 
 /** The help's history line: on or off, and how many fixes are kept. */
 const historyLine = async ($: EngineInterface) => {
@@ -627,7 +563,6 @@ export const register: Register = (on, options) => {
     await update($, isOn, () => moved.enabled ?? s.enabled)
     await update($, isNatural, () => moved.natural ?? s.natural)
     await update($, keepsHistory, () => s.history)
-    await update($, usesCustom, () => s.customPrompt)
     if (s.history) {
       await announceHistory($).catch(() => undefined)
     }
@@ -653,7 +588,7 @@ export const register: Register = (on, options) => {
           `Check: ${check}. Natural line: ${(await read($, isNatural)) ? 'on' : 'off'}.`,
           `Model: ${s.model}, effort ${s.effort}, spelling ${s.dialect}, at least ${s.minWords} words, up to ${s.maxChars} characters.`,
           await historyLine($),
-          `Prompt: ${(await read($, usesCustom)) ? 'custom (grammar-prompt.md)' : 'default'}.`,
+          await promptLine($),
         ]
         return { text: `${now.join('\n')}\n\n${USAGE}` }
       }
@@ -693,7 +628,7 @@ export const register: Register = (on, options) => {
         return { text: await historyCommand($, sub) }
       }
       case 'prompt':
-        return { text: await promptCommand($, sub) }
+        return { text: await promptCommand($, s, sub) }
       case 'ignore': {
         const words = entriesFrom(rest.slice(1).join(' '))
         if (sub === '' || sub === 'list') {

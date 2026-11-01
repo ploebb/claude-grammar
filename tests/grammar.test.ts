@@ -3,7 +3,7 @@ import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 
 import { applyFixes, compileIgnore, compileSkip, cut, entriesFrom, mergeLists, parseLists, settingsFrom, wordCount } from '../hooks/config'
-import { BATCH, DEFAULT_RULES, RULES_CAP, customRules, keepFixes, parseBatch, parseReply, system, typedPart } from '../hooks/check'
+import { BATCH, keepFixes, parseBatch, parseReply, system, typedPart } from '../hooks/check'
 import { STREAK_FROM, checkFor, cleanText, plainText, usefulNatural } from '../hooks/grammar'
 import { historyText, importWindow, keepable, kindOf, merge, pairsOf, parseHistory, parsePeriod, prune, record, reviewInput, statsText, summaryOf, trendOf, within } from '../hooks/history'
 import type { Period } from '../hooks/history'
@@ -661,9 +661,7 @@ test('config helpers: settings, lists, words and cuts', () => {
     desktop: 'band',
     history: true,
     clean: true,
-    customPrompt: false,
   })
-  expect(settingsFrom({ custom_prompt: true }).customPrompt).toBe(true)
   expect(settingsFrom({ effort: 'max', max_chars: 5, dialect: 'au' })).toMatchObject({ effort: 'low', maxChars: 200, dialect: 'any', desktop: 'band' })
   expect(parseLists('{"ignore": ["a", 3, ""], "other": 1}')).toEqual({ ignore: ['a'], skip: [], history: true })
   expect(parseLists('{"history": false}').history).toBe(false)
@@ -1156,133 +1154,61 @@ test('/grammar review 7d reviews only that week and opens with a summary card', 
 const PROMPT_FILE = '/home/u/.claude/grammar-prompt.md'
 const MINE = 'Flag only the word "appea".'
 
-test('the default prompt is the built-in rules plus the appended parts, unchanged', async ($, on) => {
+test('no prompt file: the built-in prompt, unchanged', async ($, on) => {
   const clock = mock.clock(on)
-  const asked = haiku(on, FIXES, undefined, { [PROMPT_FILE]: MINE })
-  expect(system({ natural: false })).toBe(system({ natural: false, rules: DEFAULT_RULES }))
-  expect(system({ natural: false })).toMatch(/^You proofread English that a non-native speaker typed/)
+  const asked = haiku(on, FIXES)
   await $.prompt.submit({ text: TYPO } as never)
   await clock.advance(5)
-  // custom_prompt is off: the file is not read.
   expect(asked.systems[0]).toBe(system({ natural: true, kind: true }))
-  expect(asked.systems[0]).not.toContain(MINE)
+  expect(asked.systems[0]).toMatch(/^You proofread English that a non-native speaker typed/)
 })
 
-test('custom on: the file\'s rules replace the built-in ones, the other parts stay', { options: { custom_prompt: true, dialect: 'uk' } }, async ($, on) => {
+test('a prompt file is the exact system prompt, read on every check', { options: { dialect: 'uk' } }, async ($, on) => {
   const clock = mock.clock(on)
-  const text = `<!-- how this works\nsecond comment line -->\n\n${MINE}\n<!-- one more -->\nKeep it short.\n`
-  const asked = haiku(on, FIXES, undefined, { [PROMPT_FILE]: text })
-  await $.session.start({} as never)
+  const asked = haiku(on, FIXES, undefined, { [PROMPT_FILE]: `\n  ${MINE}\n<!-- kept -->\n\n` })
   await $.prompt.submit({ text: TYPO } as never)
   await clock.advance(5)
-  const sent = asked.systems[0] ?? ''
-  expect(sent).toBe(system({ natural: true, kind: true, dialect: 'uk', rules: `${MINE}\nKeep it short.` }))
-  expect(sent).not.toContain('You proofread English')
-  expect(sent).not.toContain('<!--')
-  expect(sent).toContain('Answer with JSON only')
-  expect(sent).toContain('The writer uses British English')
-  expect(sent).toContain('"natural"')
-  expect(mine(toasts)).toEqual([])
-})
-
-test('custom on with an empty or missing file: the built-in rules and one toast', { options: { custom_prompt: true } }, async ($, on) => {
-  const clock = mock.clock(on)
-  const asked = haiku(on, FIXES, undefined, { [PROMPT_FILE]: '<!-- nothing here -->\n\n' })
-  await $.session.start({} as never)
-  await $.prompt.submit({ text: TYPO } as never)
-  await clock.advance(5)
+  asked.files.set(PROMPT_FILE, 'Second.')
   await $.prompt.submit({ text: `${TYPO} again` } as never)
   await clock.advance(5)
-  expect(asked.systems).toEqual([system({ natural: true }), system({ natural: true })])
-  expect(toasts.filter(t => t.includes('holds no rules'))).toHaveLength(1)
-
-  asked.files.delete(PROMPT_FILE)
-  await $.prompt.submit({ text: `${TYPO} third` } as never)
-  await clock.advance(5)
-  expect(asked.systems[2]).toBe(system({ natural: true }))
-  expect(toasts.some(t => t.includes('is missing'))).toBe(true)
+  expect(asked.systems).toEqual([`${MINE}\n<!-- kept -->`, 'Second.'])
 })
 
-test('custom rules over the cap are cut, with one toast', { options: { custom_prompt: true } }, async ($, on) => {
+test('a whitespace-only prompt file counts as no file', async ($, on) => {
   const clock = mock.clock(on)
-  const asked = haiku(on, FIXES, undefined, { [PROMPT_FILE]: 'word '.repeat(RULES_CAP) })
-  await $.session.start({} as never)
+  const asked = haiku(on, FIXES, undefined, { [PROMPT_FILE]: ' \n\t\n' })
   await $.prompt.submit({ text: TYPO } as never)
   await clock.advance(5)
-  const rules = (asked.systems[0] ?? '').split('\n')[0] ?? ''
-  expect(rules.length).toBeLessThanOrEqual(RULES_CAP)
-  expect(rules.length).toBeGreaterThan(RULES_CAP - 10)
-  expect(toasts.filter(t => t.includes('longer than'))).toHaveLength(1)
+  expect(asked.systems[0]).toBe(system({ natural: true, kind: true }))
+  expect((await $.command.run({ command: 'grammar', args: 'prompt' } as never)).text).toContain('Prompt: built-in')
 })
 
-test('/grammar prompt edit creates the file from the default and switches custom on', async ($, on) => {
-  const clock = mock.clock(on)
-  on('config.set', ($, e) => ({ value: e.value }) as never)
+test('/grammar prompt edit writes the built-in prompt and leaves an existing file alone', { options: { dialect: 'us' } }, async ($, on) => {
   const asked = haiku(on, FIXES)
-  expect(asked.files.has(PROMPT_FILE)).toBe(false)
   const r = await $.command.run({ command: 'grammar', args: 'prompt edit' } as never)
   expect(r.text).toContain(PROMPT_FILE)
   expect(r.text).toContain('changes apply to your next prompt')
-  const file = asked.files.get(PROMPT_FILE) ?? ''
-  expect(file.startsWith('<!--')).toBe(true)
-  expect(file).toContain(DEFAULT_RULES)
-  expect(customRules(file).rules).toBe(DEFAULT_RULES)
+  expect(r.text).toContain('Delete the file')
+  expect((asked.files.get(PROMPT_FILE) ?? '').trim()).toBe(system({ natural: true, kind: true, dialect: 'us' }))
 
-  // On, with the file as written: the same prompt as the default. An edit applies to the next prompt.
-  await $.prompt.submit({ text: TYPO } as never)
-  await clock.advance(5)
   asked.files.set(PROMPT_FILE, MINE)
-  await $.prompt.submit({ text: `${TYPO} again` } as never)
-  await clock.advance(5)
-  expect(asked.systems[0]).toBe(system({ natural: true }))
-  expect(asked.systems[1]).toBe(system({ natural: true, rules: MINE }))
-  expect((await $.command.run({ command: 'grammar', args: 'help' } as never)).text).toContain('Prompt: custom')
-
-  const shown = await $.command.run({ command: 'grammar', args: 'prompt' } as never)
-  expect(shown.text).toContain('Prompt: custom')
-  expect(shown.text).toContain(PROMPT_FILE)
-  expect(shown.text).toContain(MINE)
-})
-
-test('/grammar prompt default switches off and keeps the file; custom uses it again', async ($, on) => {
-  const clock = mock.clock(on)
-  on('config.set', ($, e) => ({ value: e.value }) as never)
-  const asked = haiku(on, FIXES, undefined, { [PROMPT_FILE]: MINE })
-  expect((await $.command.run({ command: 'grammar', args: 'prompt custom' } as never)).text).toContain('Your prompt is on')
-  const off = await $.command.run({ command: 'grammar', args: 'prompt default' } as never)
-  expect(off.text).toContain('is kept')
-  expect(off.text).toContain('/grammar prompt custom')
+  await $.command.run({ command: 'grammar', args: 'prompt edit' } as never)
   expect(asked.files.get(PROMPT_FILE)).toBe(MINE)
-  expect((await $.command.run({ command: 'grammar', args: 'help' } as never)).text).toContain('Prompt: default')
-  await $.prompt.submit({ text: TYPO } as never)
-  await clock.advance(5)
-  expect(asked.systems[0]).toBe(system({ natural: true }))
-  const shown = await $.command.run({ command: 'grammar', args: 'prompt' } as never)
-  expect(shown.text).toContain('Prompt: default')
-  expect(shown.text).toContain(DEFAULT_RULES)
-  await $.command.run({ command: 'grammar', args: 'prompt custom' } as never)
-  await $.prompt.submit({ text: `${TYPO} again` } as never)
-  await clock.advance(5)
-  expect(asked.systems[1]).toBe(system({ natural: true, rules: MINE }))
-})
-
-test('/grammar prompt reset backs the file up, rewrites it with the default and leaves the switch', { options: { custom_prompt: true } }, async ($, on) => {
-  const asked = haiku(on, FIXES, undefined, { [PROMPT_FILE]: MINE })
-  await $.session.start({} as never)
-  const r = await $.command.run({ command: 'grammar', args: 'prompt reset' } as never)
-  expect(r.text).toContain(`${PROMPT_FILE}.bak`)
-  expect(asked.files.get(`${PROMPT_FILE}.bak`)).toBe(MINE)
-  expect(customRules(asked.files.get(PROMPT_FILE) ?? '').rules).toBe(DEFAULT_RULES)
-  expect((await $.command.run({ command: 'grammar', args: 'prompt' } as never)).text).toContain('Prompt: custom')
-  expect((await $.command.run({ command: 'grammar', args: 'prompt show-default' } as never)).text).toContain(DEFAULT_RULES)
   expect((await $.command.run({ command: 'grammar', args: 'prompt nonsense' } as never)).text).toContain('/grammar prompt')
 })
 
-test('prompt helpers: comments are stripped and the rules capped', () => {
-  expect(customRules('')).toEqual({ rules: undefined, cut: false })
-  expect(customRules('<!-- a\nb -->\n  \n')).toEqual({ rules: undefined, cut: false })
-  expect(customRules('<!-- x -->\nOne.\n\n\n\n<!-- y --> Two.\n')).toEqual({ rules: 'One.\n\n Two.', cut: false })
-  const long = customRules('a '.repeat(RULES_CAP))
-  expect(long.cut).toBe(true)
-  expect(long.rules?.length).toBeLessThanOrEqual(RULES_CAP)
+test('/grammar prompt reports which prompt is in use and prints it', async ($, on) => {
+  const asked = haiku(on, FIXES)
+  const builtIn = await $.command.run({ command: 'grammar', args: 'prompt' } as never)
+  expect(builtIn.text).toContain('Prompt: built-in')
+  expect(builtIn.text).toContain(system({ natural: true, kind: true }))
+  expect((await $.command.run({ command: 'grammar', args: 'help' } as never)).text).toContain('Prompt: built-in')
+
+  asked.files.set(PROMPT_FILE, MINE)
+  const yours = await $.command.run({ command: 'grammar', args: 'prompt' } as never)
+  expect(yours.text).toContain('Prompt: yours')
+  expect(yours.text).toContain(PROMPT_FILE)
+  expect(yours.text).toContain(MINE)
+  expect(yours.text).not.toContain('You proofread English')
+  expect((await $.command.run({ command: 'grammar', args: 'help' } as never)).text).toContain(`Prompt: yours (${PROMPT_FILE})`)
 })

@@ -55,14 +55,11 @@ A prompt with no mistakes gets a green `✓` before it instead. From the third c
 | `/grammar ignore` | Shows the ignore and skip lists and the files they're in. |
 | `/grammar stats [period]` | Your mistakes by kind, the fixes you keep repeating, and whether you're making fewer. No model call. |
 | `/grammar review [period]` | A summary card, then the 3 to 5 habits behind most of your mistakes from one Sonnet call, with your own fixes as examples. Needs 20 kept fixes in the period. |
+| `/grammar prompt` | Shows whether your own prompt file or the built-in prompt is in use, the file's path, and the full system prompt in use. |
+| `/grammar prompt edit` | Writes `grammar-prompt.md` with the built-in prompt if the file doesn't exist, and tells you where it is. |
 | `/grammar history on\|off` | Keeps your fixes, or stops keeping new ones. |
 | `/grammar history clear` | Empties the history file. |
 | `/grammar history` | Shows whether it's on, how many fixes are kept, and where. |
-| `/grammar prompt` | Shows which prompt is in use (built-in or yours), the file, and the rules text sent. |
-| `/grammar prompt edit` | Writes `grammar-prompt.md` with the built-in rules if it's missing, turns your prompt on and tells you where the file is. |
-| `/grammar prompt custom`, `/grammar prompt default` | Uses the rules in your file, or goes back to the built-in ones (the file is kept). |
-| `/grammar prompt reset` | Copies your file to `grammar-prompt.md.bak`, then rewrites it with the built-in rules. |
-| `/grammar prompt show-default` | Prints the built-in rules. |
 
 A period is `7d` or `30d` (the last N days, today included), or `since 2026-10-01`. Without one, both commands cover everything kept. Days are UTC dates.
 
@@ -86,7 +83,6 @@ Under `/config`, or in `settings.json` under `pluginConfigs` → `grammar@gramma
 | `desktop` | `band` | `band`, `line`, `toast` or `off`. The desktop app doesn't draw the line under the prompt: `band` shows the newest check in color in a band above the prompt box (with a Hide button) and also adds the dim transcript line, `line` only the transcript line, `toast` shows them briefly as a toast, `off` shows nothing there. |
 | `clean` | `true` | A green `✓` before a prompt with no mistakes, and from 3 in a row, how many in a row. In the desktop app it shows as `desktop` says: in the band, as a transcript line (`line` only), or as a short toast. |
 | `history` | `true` | Keeps each fix for `/grammar stats` and `/grammar review`. Same as `/grammar history on\|off`. |
-| `custom_prompt` | `false` | Checks with the rules in `grammar-prompt.md` instead of the built-in ones. Same as `/grammar prompt custom\|default`. |
 
 ## Ignore and skip lists
 
@@ -117,15 +113,12 @@ The native-speaker line is rare on purpose. It shows only when a sentence is cle
 
 ## Your own prompt
 
-The check's rules (what counts as a mistake and what to leave alone) are a text you can replace. Run `/grammar prompt edit`: it writes `grammar-prompt.md` in your Claude Code folder (`~/.claude/`, or `$CLAUDE_CONFIG_DIR`) with the built-in rules, turns `custom_prompt` on and tells you the path. Edit the file in any editor, in the terminal or the desktop app; the next prompt you send uses it, with no reload.
+The whole system prompt can be your own text. Run `/grammar prompt edit`: it writes `grammar-prompt.md` in your Claude Code folder (`~/.claude/`, or `$CLAUDE_CONFIG_DIR`) with the built-in prompt as your settings and ignore words build it, and leaves it alone if it exists. Edit it in any editor; the next prompt you send uses it. Delete the file to go back to the built-in prompt. `/grammar prompt` shows which one is in use.
 
-- Lines inside an HTML comment `<!-- ... -->` are not sent. The file starts with such a comment explaining itself.
-- Only the rules are yours. The plugin still adds the spelling line (`dialect`), your ignore words, the answer format and the native-speaker instructions, because it reads the answer by that format.
-- At most 8000 characters are sent. If the file is missing, unreadable or empty once the comments are gone, the built-in rules are used and a toast says why.
-- The rules are sent with every check, so a longer prompt costs more. The cost table below is for the built-in one.
-- `/grammar prompt default` goes back to the built-in rules and keeps your file; `/grammar prompt custom` uses it again. `/grammar prompt reset` saves your file as `grammar-prompt.md.bak` and rewrites it with the built-in rules. `/grammar prompt` shows what is in use.
-
-`tools/import-history.ts` uses your rules too while `custom_prompt` is on.
+- While the file holds any text, it is sent as the complete system prompt, verbatim: nothing is added, stripped or cut. An empty or whitespace-only file counts as no file.
+- So the settings that shape the prompt (`dialect`, `natural`, `show_why`, the ignore words told to the model, the kind labels) don't change it. Ignore words are still filtered from the fixes locally, and natural lines are still hidden when `natural` is off.
+- The reply must keep the JSON shape the plugin parses, as in the built-in prompt. A reply that doesn't parse shows as a failed check, and 3 in a row pause the checks; delete the file to recover.
+- The prompt is sent with every check, so a longer one costs more. `tools/import-history.ts` uses the file too (followed by its batch instructions).
 
 ## Your mistakes over time
 
@@ -218,12 +211,12 @@ A mod is code that runs inside Claude Code with your permissions, so read it bef
 |---|---|
 | `$.model.complete` | The Haiku call, and the Sonnet call of `/grammar review`. |
 | `$.state` | The checks and reviews, in memory for the session. |
-| `$.config.list`, `$.config.set` | Finding the settings' keys, and saving `/grammar on\|off`, `natural on\|off`, `history on\|off` and `prompt custom\|default` as settings. |
+| `$.config.list`, `$.config.set` | Finding the settings' keys, and saving `/grammar on\|off`, `natural on\|off` and `history on\|off` as settings. |
 | `$.store` | Reading and clearing where 1.0 kept the two switches, once, and noting that the history notice has shown. |
 | `$.command.register` | `/grammar`. |
-| `$.fs.exists`, `$.fs.read`, `$.fs.write`, `$.env.get`, `$.session.root` | Finding and reading your `grammar.json` files and `grammar-prompt.md`, and keeping `grammar-history.json`. Writes go only to four files in your Claude Code folder: the global `grammar.json` on `/grammar ignore add\|rm`, the history after each check and on `/grammar history clear`, and `grammar-prompt.md` and `grammar-prompt.md.bak` on `/grammar prompt edit\|custom\|reset`. |
+| `$.fs.exists`, `$.fs.read`, `$.fs.write`, `$.env.get`, `$.session.root` | Finding and reading your `grammar.json` files and, on each check, `grammar-prompt.md`, and keeping `grammar-history.json`. Writes go only to three files in your Claude Code folder: the global `grammar.json` on `/grammar ignore add\|rm`, the history after each check and on `/grammar history clear`, and `grammar-prompt.md` on `/grammar prompt edit` (only when it doesn't exist). |
 | `$.clock.now` | The time on each kept fix. |
-| `$.ui.toast` | The one notice for a file that doesn't parse or a prompt file that can't be used, the one naming the history file until it exists, and each check's fixes in the desktop app when `desktop` is `toast`. |
+| `$.ui.toast` | The one notice for a file that doesn't parse, the one naming the history file until it exists, and each check's fixes in the desktop app when `desktop` is `toast`. |
 | `$.ui.log` | Each check's fixes as a dim transcript line in the desktop app, where the line under the prompt isn't drawn (the `desktop` setting, `band` by default, which adds the colored band too). |
 | `$.session.surfaces` | Skipping runs that draw nowhere. |
 | `$.clock.after`, `$.ui.resolve` | Running the check off the prompt's path, and drawing the lines. |
@@ -255,7 +248,7 @@ The check asks Haiku for JSON:
 { "english": true, "fixes": [{ "from": "...", "to": "...", "why": "...", "kind": "preposition" }], "natural": null }
 ```
 
-Fixes for words that aren't in the prompt, or are on your ignore list, are dropped before they're drawn. The built-in rules are `DEFAULT_RULES` at the top of `hooks/check.ts`; to change them for yourself, use [your own prompt](#your-own-prompt).
+Fixes for words that aren't in the prompt, or are on your ignore list, are dropped before they're drawn. The built-in system prompt is at the top of `hooks/check.ts`; to change it for yourself, use [your own prompt](#your-own-prompt).
 
 Works well beside [open-questions](https://github.com/jaklimoff/claude-open-questions): the answers it sends or appends for you are not checked, since they quote Claude's own words.
 

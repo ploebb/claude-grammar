@@ -1,15 +1,14 @@
 // The check itself: the system prompt, the reply's parsing and the fixes worth keeping. Plain functions, no engine
 // calls, so tools/import-history.ts can check old prompts exactly as the plugin checks new ones.
 import type { GrammarFix, GrammarReply } from '../types'
-import { cut, isIgnored } from './config'
+import { isIgnored } from './config'
 import type { Dialect, Ignore } from './config'
 import { KINDS, kindOf } from './history'
 
 // Plain ignore words told to the model; the local filter still drops fixes for all of them.
 const MAX_PROMPT_WORDS = 100
 
-/** The proofreading rules: the part of the system prompt `grammar-prompt.md` can replace. */
-export const DEFAULT_RULES = `You proofread English that a non-native speaker typed as a prompt to a coding assistant.
+const BASE = `You proofread English that a non-native speaker typed as a prompt to a coding assistant.
 Report only real mistakes: spelling and typos, grammar (tense, agreement, articles, prepositions, word order), a wrong word, a missing word.
 Ignore all of these: capitalization (a lowercase "i" or sentence start is fine), punctuation style, apostrophes left out of contractions (lets, dont, im, thats), a casual tone, slang and short forms (smth, pls, u, btw, lol, etc), code, commands, file paths, identifiers, URLs, logs, and quoted or pasted text.
 Keep the writer's voice: change as few words as possible, never rephrase for style.`
@@ -31,37 +30,17 @@ const KIND_RULE = `For "kind": article is a missing, extra or wrong a, an or the
 const NATURAL = `Also add "natural" to the JSON: null in most cases. Only when a native speaker would clearly say a sentence differently (an unidiomatic phrase, a word-for-word translation), even with the grammar fixed, give that one sentence the way a native speaker would say it: same meaning, same casual tone, the writer's own casing.
 Never use "natural" for style taste, for a sentence that is fine once the fixes are applied, or for code.`
 
-// Longest custom rules sent, in characters: the system prompt is paid for on every check.
-export const RULES_CAP = 8000
-
-/**
- * The rules a grammar-prompt.md holds: without its HTML comments, trimmed, cut at RULES_CAP. `rules` is undefined when
- * nothing is left; `cut` says the file was longer than the cap.
- */
-export const customRules = (text: string): { rules: string | undefined; cut: boolean } => {
-  const stripped = text.replace(/^[ \t]*<!--[\s\S]*?-->[ \t]*(\n|$)/gm, '').replace(/<!--[\s\S]*?-->/g, '').replace(/\n{3,}/g, '\n\n').trim()
-  return { rules: stripped === '' ? undefined : cut(stripped, RULES_CAP).trim(), cut: stripped.length > RULES_CAP }
-}
-
-export type PromptParts = {
-  natural: boolean
-  dialect?: Dialect
-  showWhy?: boolean
-  kind?: boolean
-  ignore?: readonly string[]
-  /** Replaces DEFAULT_RULES (the user's grammar-prompt.md); the parts after the rules stay. */
-  rules?: string | undefined
-}
+export type PromptParts = { natural: boolean; dialect?: Dialect; showWhy?: boolean; kind?: boolean; ignore?: readonly string[] }
 
 /**
  * The system prompt: the rules, the spelling, the user's ignore words, the answer's shape (with each fix's kind while
  * the history is on), and the natural-phrasing ask when it is on.
  */
-export const system = ({ natural, dialect = 'any', showWhy = true, kind = true, ignore = [], rules }: PromptParts) => {
+export const system = ({ natural, dialect = 'any', showWhy = true, kind = true, ignore = [] }: PromptParts) => {
   const words = ignore.slice(0, MAX_PROMPT_WORDS)
   const never =
     words.length > 0 ? [`Never flag these, the writer means them as written: ${words.map(w => JSON.stringify(w)).join(', ')}.`] : []
-  return [rules ?? DEFAULT_RULES, DIALECT[dialect], ...never, answer(showWhy, kind), ...(kind ? [KIND_RULE] : []), ...(natural ? [NATURAL] : [])].join('\n')
+  return [BASE, DIALECT[dialect], ...never, answer(showWhy, kind), ...(kind ? [KIND_RULE] : []), ...(natural ? [NATURAL] : [])].join('\n')
 }
 
 const isFix = (x: unknown): x is GrammarFix => {
