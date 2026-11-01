@@ -55,6 +55,9 @@ A prompt with no mistakes gets a green `✓` before it instead. From the third c
 | `/grammar ignore` | Shows the ignore and skip lists and the files they're in. |
 | `/grammar stats [period]` | Your mistakes by kind, the fixes you keep repeating, and whether you're making fewer. No model call. |
 | `/grammar review [period]` | A summary card, then the 3 to 5 habits behind most of your mistakes from one Sonnet call, with your own fixes as examples. Needs 20 kept fixes in the period. |
+| `/grammar prompt` | Shows where each part of the prompt comes from (built-in, global or project file), the problems in the files, and the prompt your settings put together. |
+| `/grammar prompt edit` | Writes `grammar-prompt.md` in your Claude Code folder with every section, if it doesn't exist. See [your own prompt](#your-own-prompt). |
+| `/grammar prompt edit project` | Writes the project's `.claude/grammar-prompt.md` with the note only, if it doesn't exist. |
 | `/grammar history on\|off` | Keeps your fixes, or stops keeping new ones. |
 | `/grammar history clear` | Empties the history file. |
 | `/grammar history` | Shows whether it's on, how many fixes are kept, and where. |
@@ -108,6 +111,26 @@ Put a `grammar.json` in your Claude Code folder (`~/.claude/grammar.json`, or `$
 - **No line at all:** a prompt that is not English, slash commands, and anything in `claude -p` or the SDK, where nothing would show it.
 
 The native-speaker line is rare on purpose. It shows only when a sentence is clearly unidiomatic even with the grammar fixed, not for style.
+
+## Your own prompt
+
+`/grammar prompt edit` writes `grammar-prompt.md` in your Claude Code folder (`~/.claude/`, or `$CLAUDE_CONFIG_DIR`) with a note and one `## name` section per part of the check prompt, each holding the built-in text. Edit a section and your next prompt uses it. Delete a section for its built-in text, or the file for the built-in prompt. An existing file is never overwritten.
+
+`/grammar prompt edit project` does the same for the project: `.claude/grammar-prompt.md` in its root, with the note only, so it overrides nothing until you add a section. A project section beats the same global section, which beats the built-in text. The project file is part of the repo, so if you commit it, whoever clones it gets your sections.
+
+| Section | Sent | Markers |
+| --- | --- | --- |
+| `rules` | always | |
+| `spelling any`, `spelling us`, `spelling uk` | the one your `dialect` setting picks | |
+| `ignore` | only when you have ignore words | `{words}`: the quoted words, comma-separated |
+| `answer` | always | `{why}` adds the `why` field when `show_why` is on; `{kind}` adds the `kind` field when history is on |
+| `kind` | only when history is on | |
+| `natural` | only when the native-speaker line is on | |
+
+- Text above the first `## ` heading, like the note, is never sent. Headings match without regard to case.
+- A problem (unknown or repeated heading, empty section, `ignore` without `{words}`, `answer` without `{why}` or `{kind}`, unknown `{marker}`) never stops a check; the part falls back to the built-in text. Each shows once as a toast with its file's path, and `/grammar prompt` lists them.
+- The reply must stay the JSON `answer` describes. A reply that doesn't parse, or whose fixes all lack `from` and `to`, is a failed check, and 3 in a row pause the checks; delete the section to recover.
+- The prompt is sent with every check, so a longer one costs more. `tools/import-history.ts` reads the global file, not a project's.
 
 ## Your mistakes over time
 
@@ -203,7 +226,7 @@ A mod is code that runs inside Claude Code with your permissions, so read it bef
 | `$.config.list`, `$.config.set` | Finding the settings' keys, and saving `/grammar on\|off`, `natural on\|off` and `history on\|off` as settings. |
 | `$.store` | Reading and clearing where 1.0 kept the two switches, once, and noting that the history notice has shown. |
 | `$.command.register` | `/grammar`. |
-| `$.fs.exists`, `$.fs.read`, `$.fs.write`, `$.env.get`, `$.session.root` | Finding and reading your `grammar.json` files, and keeping `grammar-history.json`. Writes go only to two files in your Claude Code folder: the global `grammar.json` on `/grammar ignore add\|rm`, and the history after each check and on `/grammar history clear`. |
+| `$.fs.exists`, `$.fs.read`, `$.fs.write`, `$.env.get`, `$.session.root` | Finding and reading your `grammar.json` files and, on each check, the global and the project `grammar-prompt.md`, and keeping `grammar-history.json`. Writes go only to three files in your Claude Code folder: the global `grammar.json` on `/grammar ignore add\|rm`, the history after each check and on `/grammar history clear`, and `grammar-prompt.md` on `/grammar prompt edit` (only when it doesn't exist). The one write outside it is the project's `.claude/grammar-prompt.md` on `/grammar prompt edit project` (only when it doesn't exist). |
 | `$.clock.now` | The time on each kept fix. |
 | `$.ui.toast` | The one notice for a file that doesn't parse, the one naming the history file until it exists, and each check's fixes in the desktop app when `desktop` is `toast`. |
 | `$.ui.log` | Each check's fixes as a dim transcript line in the desktop app, where the line under the prompt isn't drawn (the `desktop` setting, `band` by default, which adds the colored band too). |
@@ -237,7 +260,7 @@ The check asks Haiku for JSON:
 { "english": true, "fixes": [{ "from": "...", "to": "...", "why": "...", "kind": "preposition" }], "natural": null }
 ```
 
-Fixes for words that aren't in the prompt, or are on your ignore list, are dropped before they're drawn. The system prompt is at the top of `hooks/check.ts`, so tune it there.
+Fixes for words that aren't in the prompt, or are on your ignore list, are dropped before they're drawn. The built-in system prompt is at the top of `hooks/check.ts`; to change it for yourself, use [your own prompt](#your-own-prompt).
 
 Works well beside [open-questions](https://github.com/jaklimoff/claude-open-questions): the answers it sends or appends for you are not checked, since they quote Claude's own words.
 

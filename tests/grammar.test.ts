@@ -3,9 +3,9 @@ import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 
 import { applyFixes, compileIgnore, compileSkip, cut, entriesFrom, mergeLists, parseLists, settingsFrom, wordCount } from '../hooks/config'
-import { BATCH, keepFixes, parseBatch, parseReply, system, typedPart } from '../hooks/check'
+import { BATCH, BUILT_IN, PART_NAMES, PROMPT_HEADER, keepFixes, parseBatch, parsePromptFile, parseReply, promptFileText, system, typedPart } from '../hooks/check'
 import { STREAK_FROM, checkFor, cleanText, plainText, usefulNatural } from '../hooks/grammar'
-import { historyText, importWindow, keepable, kindOf, merge, pairsOf, parseHistory, parsePeriod, prune, record, reviewInput, statsText, summaryOf, trendOf, within } from '../hooks/history'
+import { KINDS, historyText, importWindow, keepable, kindOf, merge, pairsOf, parseHistory, parsePeriod, prune, record, reviewInput, statsText, summaryOf, trendOf, within } from '../hooks/history'
 import type { Period } from '../hooks/history'
 import type { Entry, History, Kind } from '../hooks/history'
 import { batches, typedText } from '../tools/transcript'
@@ -210,6 +210,16 @@ test('a failed check says so in one dim line', async ($, on) => {
   await $.prompt.submit({ text: TYPO } as never)
   await clock.advance(5)
   expect(await (await mountRow($, TYPO)).find({ key: 'gr-error' })).toBeDefined()
+})
+
+test('a reply whose fixes lack from and to is a failed check, not a clean prompt', async ($, on) => {
+  const clock = mock.clock(on)
+  haiku(on, { english: true, fixes: [{ wrong: 'x', right: 'y' }] })
+  await $.prompt.submit({ text: TYPO } as never)
+  await clock.advance(5)
+  const row = await mountRow($, TYPO)
+  expect((await row.find({ key: 'gr-error' }))?.text).toContain('have no "from" and "to" fields')
+  expect(await row.find({ key: 'gr-ok' })).toBeUndefined()
 })
 
 test('three failures in a row pause the checks until /grammar on', async ($, on) => {
@@ -597,6 +607,8 @@ test('the reply is parsed, and a row finds its check even with text appended', (
   expect(reply?.natural).toBeNull()
   expect(parseReply('{"english": true, "fixes": [{"from": "a", "to": "b"}]}')?.fixes[0]?.why).toBe('')
   expect(() => parseReply('sorry, no')).toThrow()
+  expect(parseReply('{"english": true, "fixes": [{"wrong": "x"}, {"from": "a", "to": "b"}]}')?.fixes.length).toBe(1)
+  expect(parseReply('{"english": true, "fixes": []}')?.fixes).toEqual([])
 
   const all = [
     { id: 2, text: 'fix it', status: 'done' as const, fixes: [] },
@@ -1149,4 +1161,336 @@ test('/grammar review 7d reviews only that week and opens with a summary card', 
   expect(await (await mountOutput($, 'help', 'Check: on.')).find({ key: 'gr-panel' })).toBeUndefined()
   expect((await $.command.run({ command: 'grammar', args: 'review 1d' } as never)).text).toContain('Try a longer period')
   expect((await $.command.run({ command: 'grammar', args: 'review someday' } as never)).text).toContain('7d, 30d')
+})
+
+const PROMPT_FILE = '/home/u/.claude/grammar-prompt.md'
+const PROJECT_PROMPT_FILE = '/work/app/.claude/grammar-prompt.md'
+const NOW_SYSTEM = { natural: true, kind: true } as const
+
+/** main's system(), as it was before the prompt could be overridden part by part. */
+const legacySystem = ({ natural, dialect = 'any', showWhy = true, kind = true, ignore = [] }: Parameters<typeof system>[0]) => {
+  const base = `You proofread English that a non-native speaker typed as a prompt to a coding assistant.
+Report only real mistakes: spelling and typos, grammar (tense, agreement, articles, prepositions, word order), a wrong word, a missing word.
+Ignore all of these: capitalization (a lowercase "i" or sentence start is fine), punctuation style, apostrophes left out of contractions (lets, dont, im, thats), a casual tone, slang and short forms (smth, pls, u, btw, lol, etc), code, commands, file paths, identifiers, URLs, logs, and quoted or pasted text.
+Keep the writer's voice: change as few words as possible, never rephrase for style.`
+  const dialects = {
+    any: 'Accept American and British spelling alike.',
+    us: 'The writer uses American English: a British spelling (colour, organise) is a spelling mistake.',
+    uk: 'The writer uses British English: an American spelling (color, organize) is a spelling mistake.',
+  }
+  const kindField = `, "kind": "<one of: ${KINDS.join(', ')}>"`
+  const answer = `Answer with JSON only, no prose and no code fence:
+{"english": true, "fixes": [{"from": "<exact words from the text>", "to": "<the fixed words>"${showWhy ? ', "why": "<2 to 4 words>"' : ''}${kind ? kindField : ''}}]}
+"fixes" is [] when the English is fine. If the text is not mainly English, answer {"english": false, "fixes": []}.`
+  const kindRule = `For "kind": article is a missing, extra or wrong a, an or the; missing word and extra word are for any other word.`
+  const nat = `Also add "natural" to the JSON: null in most cases. Only when a native speaker would clearly say a sentence differently (an unidiomatic phrase, a word-for-word translation), even with the grammar fixed, give that one sentence the way a native speaker would say it: same meaning, same casual tone, the writer's own casing.
+Never use "natural" for style taste, for a sentence that is fine once the fixes are applied, or for code.`
+  const words = ignore.slice(0, 100)
+  const never = words.length > 0 ? [`Never flag these, the writer means them as written: ${words.map(w => JSON.stringify(w)).join(', ')}.`] : []
+  return [base, dialects[dialect], ...never, answer, ...(kind ? [kindRule] : []), ...(natural ? [nat] : [])].join('\n')
+}
+
+/** One /grammar prompt reply's text. */
+const promptText = async ($: Engine, args = '') => (await $.command.run({ command: 'grammar', args: `prompt ${args}`.trim() } as never)).text ?? ''
+
+/** A prompt file with the given sections, under a note that must never be sent. */
+const sections = (parts: Record<string, string>) =>
+  `<!-- NOTE-NOT-SENT -->\n\n${Object.entries(parts).map(([n, b]) => `## ${n}\n\n${b}\n`).join('\n')}`
+
+test('system() without overrides matches the legacy prompt', () => {
+  const words = [[], ['kubectl'], ['a', 'b "q"'], Array.from({ length: 120 }, (_, i) => `w${i}`)]
+  for (const natural of [true, false]) {
+    for (const dialect of ['any', 'us', 'uk'] as const) {
+      for (const showWhy of [true, false]) {
+        for (const kind of [true, false]) {
+          for (const ignore of words) {
+            const p = { natural, dialect, showWhy, kind, ignore }
+            expect(system(p)).toBe(legacySystem(p))
+            expect(system(p, {})).toBe(legacySystem(p))
+          }
+        }
+      }
+    }
+  }
+  expect(system({ natural: true })).toBe(legacySystem({ natural: true }))
+})
+
+test('parsePromptFile reads sections', () => {
+  const r = parsePromptFile('intro\n## not this\n\n<!-- hi -->\n\n##   Spelling   UK \nBritish.\nTwo lines.\n\n## rules\n  Mine.  \n')
+  expect(r.parts).toEqual({ 'spelling uk': 'British.\nTwo lines.', rules: 'Mine.' })
+  expect(r.problems).toHaveLength(1)
+  expect(r.problems[0]).toContain('"## not this"')
+  expect(r.problems[0]).toContain(PART_NAMES.join(', '))
+  expect(parsePromptFile('').parts).toEqual({})
+  expect(parsePromptFile('just text, no heading').problems).toEqual([])
+  expect(parsePromptFile('##rules\nx').parts).toEqual({})
+  expect(parsePromptFile('## RULES\r\nWindows.\r\n').parts).toEqual({ rules: 'Windows.' })
+})
+
+test('parsePromptFile reports problems', () => {
+  const dup = parsePromptFile('## rules\nOne.\n## rules\nTwo.\n')
+  expect(dup.parts).toEqual({ rules: 'Two.' })
+  expect(dup.problems).toEqual(['Section "## rules" appears twice; the last one is used.'])
+
+  const empty = parsePromptFile('## rules\n   \n## kind\nK.')
+  expect(empty.parts).toEqual({ kind: 'K.' })
+  expect(empty.problems).toEqual(['Section "## rules" is empty, so the built-in text is used.'])
+
+  expect(parsePromptFile('## ignore\nNever flag these.').problems).toEqual(['"## ignore" has no {words}, so your ignore words are not sent.'])
+  expect(parsePromptFile('## ignore\nNever flag {words}.').problems).toEqual([])
+
+  const answer = parsePromptFile('## answer\nJSON only.')
+  expect(answer.problems).toHaveLength(2)
+  expect(answer.problems[0]).toContain('{why}')
+  expect(answer.problems[0]).toContain('show_why has no effect')
+  expect(answer.problems[1]).toContain('{kind}')
+  expect(answer.problems[1]).toContain('history')
+
+  const marker = parsePromptFile('## rules\nUse {foo} here.\n## ignore\n{words} and {why}')
+  expect(marker.problems).toHaveLength(2)
+  expect(marker.problems[0]).toContain('{foo}')
+  expect(marker.problems[0]).toContain('it has none')
+  expect(marker.problems[1]).toContain('{why}')
+  expect(marker.problems[1]).toContain('{words}')
+  // JSON braces are not markers.
+  expect(parsePromptFile(`## answer\n${BUILT_IN.answer}`).problems).toEqual([])
+})
+
+test('system() replaces only the overridden part and fills markers', () => {
+  const p = { natural: true, dialect: 'us', showWhy: false, kind: true, ignore: ['x$&y'] } as const
+  const base = system(p)
+  expect(system(p, { rules: 'R.' })).toBe(base.replace(BUILT_IN.rules, 'R.'))
+  expect(system(p, { 'spelling uk': 'unused' })).toBe(base)
+  expect(system(p, { ignore: 'Skip {words} {nope}.' })).toContain('Skip "x$&y" {nope}.')
+  expect(system(p, { answer: 'A{why}|{kind}|' })).toContain('\nA|, "kind": "<one of: ')
+  const never = 'Never flag these, the writer means them as written: "x$&y".'
+  expect(system({ ...p, kind: false }, { answer: 'A{why}|{kind}|', kind: 'K' })).toBe([BUILT_IN.rules, BUILT_IN['spelling us'], never, 'A||', BUILT_IN.natural].join('\n'))
+})
+
+test('no prompt file sends the built-in prompt', async ($, on) => {
+  const clock = mock.clock(on)
+  const asked = haiku(on, FIXES)
+  await $.prompt.submit({ text: TYPO } as never)
+  await clock.advance(5)
+  expect(asked.systems[0]).toBe(legacySystem(NOW_SYSTEM))
+  expect(asked.systems[0]).toMatch(/^You proofread English that a non-native speaker typed/)
+  const r = await promptText($)
+  expect(r.startsWith('Prompt: built-in')).toBe(true)
+  expect(r).toContain(legacySystem(NOW_SYSTEM))
+  expect((await $.command.run({ command: 'grammar', args: 'help' } as never)).text).toContain('Prompt: built-in')
+})
+
+test('a blank or section-less file counts as built-in', async ($, on) => {
+  const clock = mock.clock(on)
+  const asked = haiku(on, FIXES, undefined, { [PROMPT_FILE]: ' \n\t\n' })
+  await $.prompt.submit({ text: TYPO } as never)
+  await clock.advance(5)
+  expect(asked.systems[0]).toBe(legacySystem(NOW_SYSTEM))
+  expect(await promptText($)).toContain('Prompt: built-in')
+  asked.files.set(PROMPT_FILE, 'only a note, sent nowhere')
+  expect((await promptText($)).startsWith('Prompt: built-in')).toBe(true)
+  expect((await $.command.run({ command: 'grammar', args: 'help' } as never)).text).toContain('Prompt: built-in')
+})
+
+test('/grammar prompt edit writes every section', { options: { dialect: 'us', show_why: false } }, async ($, on) => {
+  const clock = mock.clock(on)
+  const asked = haiku(on, FIXES)
+  const r = await promptText($, 'edit')
+  expect(r).toContain(PROMPT_FILE)
+  expect(r).toContain('changes apply to your next prompt')
+  const file = asked.files.get(PROMPT_FILE) ?? ''
+  expect(file.startsWith(PROMPT_HEADER)).toBe(true)
+  expect(file).toBe(promptFileText())
+  for (const n of PART_NAMES) {
+    expect(file).toContain(`\n## ${n}\n`)
+  }
+  const parsed = parsePromptFile(file)
+  expect(parsed.problems).toEqual([])
+  expect(parsed.parts).toEqual(BUILT_IN)
+
+  await $.prompt.submit({ text: TYPO } as never)
+  await clock.advance(5)
+  expect(asked.systems[0]).toBe(legacySystem({ ...NOW_SYSTEM, dialect: 'us', showWhy: false }))
+  const shown = await promptText($)
+  expect(shown.startsWith('Prompt: yours\n')).toBe(true)
+  for (const n of PART_NAMES) {
+    expect(shown).toContain(`\n${n}: global (/home/u/.claude/grammar-prompt.md)\n`)
+  }
+  expect(shown).toContain(legacySystem({ ...NOW_SYSTEM, dialect: 'us', showWhy: false }))
+  expect(shown).not.toContain('Problems')
+
+  asked.files.set(PROMPT_FILE, 'mine')
+  await promptText($, 'edit')
+  expect(asked.files.get(PROMPT_FILE)).toBe('mine')
+  expect(await promptText($, 'nonsense')).toContain('/grammar prompt')
+})
+
+test('an overridden section applies on the next check', async ($, on) => {
+  const clock = mock.clock(on)
+  const asked = haiku(on, FIXES, undefined, { [PROMPT_FILE]: sections({ rules: 'Flag only "appea".' }) })
+  await $.prompt.submit({ text: TYPO } as never)
+  await clock.advance(5)
+  expect(asked.systems[0]).toBe(legacySystem(NOW_SYSTEM).replace(BUILT_IN.rules, 'Flag only "appea".'))
+  expect(asked.systems[0]).not.toContain('NOTE-NOT-SENT')
+  asked.files.set(PROMPT_FILE, sections({ rules: 'Second.' }))
+  await $.prompt.submit({ text: `${TYPO} again` } as never)
+  await clock.advance(5)
+  expect(asked.systems[1]).toBe(legacySystem(NOW_SYSTEM).replace(BUILT_IN.rules, 'Second.'))
+  const shown = await promptText($)
+  expect(shown.startsWith('Prompt: yours\nrules: global (/home/u/.claude/grammar-prompt.md)\nspelling any: built-in\n')).toBe(true)
+  expect((await $.command.run({ command: 'grammar', args: 'help' } as never)).text).toContain('Prompt: yours (/home/u/.claude/grammar-prompt.md)')
+  asked.files.delete(PROMPT_FILE)
+  await $.prompt.submit({ text: `${TYPO} third` } as never)
+  await clock.advance(5)
+  expect(asked.systems[2]).toBe(legacySystem(NOW_SYSTEM))
+})
+
+test('the spelling setting picks the spelling section', { options: { dialect: 'uk' } }, async ($, on) => {
+  const clock = mock.clock(on)
+  const asked = haiku(on, FIXES, undefined, {
+    [PROMPT_FILE]: sections({ 'spelling any': 'ANY', 'spelling us': 'US', 'spelling uk': 'UK ONLY' }),
+  })
+  await $.prompt.submit({ text: TYPO } as never)
+  await clock.advance(5)
+  expect(asked.systems[0]).toContain('\nUK ONLY\n')
+  expect(asked.systems[0]).not.toMatch(/\nANY\n|\nUS\n/)
+})
+
+test('natural off drops the natural section, global or project', async ($, on) => {
+  const clock = mock.clock(on)
+  const asked = haiku(on, FIXES, undefined, {
+    [PROMPT_FILE]: sections({ natural: 'GLOBAL NATURAL' }),
+    [PROJECT_PROMPT_FILE]: sections({ natural: 'PROJECT NATURAL' }),
+  })
+  await $.prompt.submit({ text: TYPO } as never)
+  await clock.advance(5)
+  expect(asked.systems[0]).toContain('PROJECT NATURAL')
+  await $.command.run({ command: 'grammar', args: 'natural off' } as never)
+  await $.prompt.submit({ text: `${TYPO} again` } as never)
+  await clock.advance(5)
+  expect(asked.systems[1]).toBe(legacySystem({ natural: false, kind: true }))
+  expect(await promptText($)).not.toContain('PROJECT NATURAL')
+})
+
+test('ignore words fill {words}; no ignore words, no ignore section', async ($, on) => {
+  const clock = mock.clock(on)
+  const asked = haiku(on, FIXES, undefined, {
+    [PROMPT_FILE]: sections({ ignore: 'Skip: {words}!' }),
+    [HOME_FILE]: JSON.stringify({ ignore: ['kubectl', 'pnpm'] }),
+  })
+  await $.prompt.submit({ text: TYPO } as never)
+  await clock.advance(5)
+  expect(asked.systems[0]).toContain('\nSkip: "kubectl", "pnpm"!\n')
+  expect(asked.systems[0]).not.toContain('Never flag these')
+  asked.files.set(HOME_FILE, '{}')
+  await $.prompt.submit({ text: `${TYPO} again` } as never)
+  await clock.advance(5)
+  expect(asked.systems[1]).not.toContain('Skip:')
+})
+
+test('show_why off empties {why}; history off empties {kind}', { options: { show_why: false } }, async ($, on) => {
+  const clock = mock.clock(on)
+  const asked = haiku(on, FIXES, undefined, { [PROMPT_FILE]: sections({ answer: 'JSON: [{"to": ""{why}{kind}}]' }) })
+  await $.prompt.submit({ text: TYPO } as never)
+  await clock.advance(5)
+  expect(asked.systems[0]).toContain(`\nJSON: [{"to": "", "kind": "<one of: ${KINDS.join(', ')}>"}]\n`)
+  await $.command.run({ command: 'grammar', args: 'history off' } as never)
+  await $.prompt.submit({ text: `${TYPO} again` } as never)
+  await clock.advance(5)
+  expect(asked.systems[1]).toContain('\nJSON: [{"to": ""}]\n')
+})
+
+test('file problems toast once and are listed', async ($, on) => {
+  const clock = mock.clock(on)
+  const file = [
+    sections({ rules: 'Mine, with {mystery}.', 'bogus part': 'x', ignore: 'No marker.', kind: '' }),
+    '## rules\n\nMine, with {mystery}.\n',
+  ].join('\n')
+  const asked = haiku(on, FIXES, undefined, { [PROMPT_FILE]: file, [HOME_FILE]: JSON.stringify({ ignore: ['kubectl'] }) })
+  await $.prompt.submit({ text: TYPO } as never)
+  await clock.advance(5)
+  await $.prompt.submit({ text: `${TYPO} again` } as never)
+  await clock.advance(5)
+  const sys = asked.systems[0] ?? ''
+  expect(sys.startsWith('Mine, with {mystery}.\n')).toBe(true)
+  expect(sys).toContain('No marker.')
+  expect(sys).toContain(BUILT_IN.kind)
+  expect(sys).not.toContain('kubectl')
+  const ours = toasts.filter(t => t.startsWith('grammar: /home/u/.claude/grammar-prompt.md: '))
+  expect(ours).toHaveLength(5)
+  expect(ours.join('\n')).toContain('"## bogus part"')
+  expect(ours.join('\n')).toContain('appears twice')
+  expect(ours.join('\n')).toContain('{mystery}')
+  expect(ours.join('\n')).toContain('has no {words}')
+  expect(ours.join('\n')).toContain('"## kind" is empty')
+  const shown = await promptText($)
+  expect(shown).toContain('Problems:')
+  expect(shown).toContain('- /home/u/.claude/grammar-prompt.md: Unknown section "## bogus part"')
+  expect(shown).toContain('\nrules: global (/home/u/.claude/grammar-prompt.md)\n')
+  expect(shown).toContain('\nignore: global (/home/u/.claude/grammar-prompt.md)\n')
+  expect(shown).toContain('\nkind: built-in\n')
+})
+
+test('the header lists every heading and parses as nothing', () => {
+  for (const n of PART_NAMES) {
+    expect(PROMPT_HEADER).toContain(`## ${n} `)
+  }
+  expect(parsePromptFile(PROMPT_HEADER)).toEqual({ parts: {}, problems: [] })
+})
+
+test('project beats global beats built-in', async ($, on) => {
+  const clock = mock.clock(on)
+  const asked = haiku(on, FIXES, undefined, {
+    [PROMPT_FILE]: sections({ rules: 'GLOBAL RULES', kind: 'GLOBAL KIND', natural: 'GLOBAL NATURAL' }),
+    [PROJECT_PROMPT_FILE]: sections({ rules: 'PROJECT RULES', natural: 'PROJECT NATURAL' }),
+  })
+  await $.prompt.submit({ text: TYPO } as never)
+  await clock.advance(5)
+  expect(asked.systems[0]).toBe(
+    legacySystem(NOW_SYSTEM).replace(BUILT_IN.rules, 'PROJECT RULES').replace(BUILT_IN.kind, 'GLOBAL KIND').replace(BUILT_IN.natural, 'PROJECT NATURAL'),
+  )
+  const shown = await promptText($)
+  expect(shown.startsWith('Prompt: yours\n')).toBe(true)
+  expect(shown).toContain('\nrules: project (/work/app/.claude/grammar-prompt.md)\n')
+  expect(shown).toContain('\nkind: global (/home/u/.claude/grammar-prompt.md)\n')
+  expect(shown).toContain('\nanswer: built-in\n')
+  expect(shown).toContain('\nnatural: project (/work/app/.claude/grammar-prompt.md)\n')
+  expect((await $.command.run({ command: 'grammar', args: 'help' } as never)).text).toContain(
+    'Prompt: yours (/home/u/.claude/grammar-prompt.md, /work/app/.claude/grammar-prompt.md)',
+  )
+})
+
+test('/grammar prompt edit project writes the header only', async ($, on) => {
+  const clock = mock.clock(on)
+  const asked = haiku(on, FIXES)
+  const r = await promptText($, 'edit project')
+  expect(r).toContain(PROJECT_PROMPT_FILE)
+  expect(r).toContain('overrides nothing until you add a section')
+  expect(r).toContain('part of the project')
+  expect(asked.files.get(PROJECT_PROMPT_FILE)).toBe(`${PROMPT_HEADER}\n`)
+  expect(asked.files.has(PROMPT_FILE)).toBe(false)
+  await $.prompt.submit({ text: TYPO } as never)
+  await clock.advance(5)
+  expect(asked.systems[0]).toBe(legacySystem(NOW_SYSTEM))
+  expect(await promptText($)).toContain('Prompt: built-in\n')
+  asked.files.set(PROJECT_PROMPT_FILE, 'mine')
+  await promptText($, 'edit project')
+  expect(asked.files.get(PROJECT_PROMPT_FILE)).toBe('mine')
+  expect(await promptText($, 'edit elsewhere')).toContain('/grammar prompt')
+})
+
+test('problems carry the path of their file', async ($, on) => {
+  const clock = mock.clock(on)
+  const asked = haiku(on, FIXES, undefined, {
+    [PROMPT_FILE]: sections({ 'bogus part': 'x' }),
+    [PROJECT_PROMPT_FILE]: sections({ rules: '' }),
+  })
+  await $.prompt.submit({ text: TYPO } as never)
+  await clock.advance(5)
+  expect(asked.systems[0]).toBe(legacySystem(NOW_SYSTEM))
+  expect(toasts.filter(t => t.startsWith('grammar: /work/app/.claude/grammar-prompt.md: '))).toHaveLength(1)
+  expect(toasts.filter(t => t.startsWith('grammar: /home/u/.claude/grammar-prompt.md: '))).toHaveLength(1)
+  const shown = await promptText($)
+  expect(shown).toContain('- /work/app/.claude/grammar-prompt.md: Section "## rules" is empty')
+  expect(shown).toContain('- /home/u/.claude/grammar-prompt.md: Unknown section "## bogus part"')
 })

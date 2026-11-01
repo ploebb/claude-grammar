@@ -2,6 +2,13 @@
 
 Each version is tagged `vX.Y.Z` and has a [GitHub release](https://github.com/jaklimoff/claude-grammar/releases) with its section below as the notes. Bump `version` in `.claude-plugin/plugin.json` on every change to what ships: installed copies update only when it changes. How releases work: [CONTRIBUTING.md](CONTRIBUTING.md#versions-and-releases).
 
+## 1.5.0 (2026-11-01)
+
+- Your own prompt, part by part. `grammar-prompt.md` in your Claude Code folder holds `## name` sections (`rules`, `spelling any|us|uk`, `ignore`, `answer`, `kind`, `natural`); each replaces that part of the built-in prompt, and a part with no section keeps the built-in text. A project can have its own `.claude/grammar-prompt.md`; per section it beats the global file, which beats the built-in text. Both are read on every check, and `tools/import-history.ts` uses the global one.
+- Your settings still choose which parts are sent (spelling, ignore words, `show_why`, history, the native-speaker line). Text above the first heading is never sent.
+- A problem in a file (unknown or repeated heading, empty section, missing `{words}`, `{why}` or `{kind}`, unknown `{marker}`) never stops a check: it shows once as a toast with the file's path, and the part falls back to the built-in text. A reply whose fixes all lack `from` and `to` is a failed check, not a clean prompt.
+- `/grammar prompt` shows where each part comes from, the problems, and the prompt your settings put together. `/grammar prompt edit` writes the global file with a note and every section, `/grammar prompt edit project` the project's with the note only; neither overwrites a file. `/grammar help` has a `Prompt:` line. Without a file the prompt, and so its cost, is unchanged.
+
 ## 1.4.0 (2026-10-31)
 
 - A prompt with no mistakes gets a green check before it. From 3 clean prompts in a row, a line under it says how many (`3 in a row`). A fix or a native-speaker line starts the count over; a failed check or another language leaves it as it is. The count is for the session.

@@ -1,6 +1,6 @@
 {
   "name": "grammar",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Checks the English of each prompt you send to Claude Code, shows the fixes under it, and keeps them so /grammar stats and /grammar review show the mistakes you make most. Sends each prompt you type to Haiku (one small call per prompt), and the kept fixes to Sonnet when you run /grammar review, through your own Claude Code session",
   "author": {
     "name": "Jack Klimov",
