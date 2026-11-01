@@ -153,7 +153,7 @@ const isFix = (x: unknown): x is GrammarFix => {
   return typeof f?.from === 'string' && typeof f.to === 'string'
 }
 
-/** The reply as fixes and a natural rewrite, or null when the text is not English. Throws on a reply that is not the JSON asked for. */
+/** The reply as fixes and a natural rewrite, or null when the text is not English. Throws on a reply that is not the JSON asked for, or whose fixes all lack from and to. */
 export const parseReply = (text: string): GrammarReply | null => {
   const start = text.indexOf('{')
   const end = text.lastIndexOf('}')
@@ -167,8 +167,12 @@ export const parseReply = (text: string): GrammarReply | null => {
   if (!Array.isArray(reply.fixes)) {
     throw new Error('no fixes in the reply')
   }
-  const fixes = reply.fixes
-    .filter(isFix)
+  const valid = reply.fixes.filter(isFix)
+  // A custom answer section may have renamed from/to: dropping every fix would show a prompt full of mistakes as clean.
+  if (reply.fixes.length > 0 && valid.length === 0) {
+    throw new Error('the reply\'s fixes have no "from" and "to" fields (is the answer section of your prompt asking for them?)')
+  }
+  const fixes = valid
     .filter(f => f.from.trim() !== f.to.trim())
     .map(f => ({ from: f.from, to: f.to, why: typeof f.why === 'string' ? f.why : '', kind: kindOf(f.kind) }))
   const natural = typeof reply.natural === 'string' && reply.natural.trim() !== '' ? reply.natural.trim() : null

@@ -130,7 +130,7 @@ The same file can also live in a project: `/grammar prompt edit project` writes 
 - Your settings keep choosing which parts are sent, so they work as before.
 - Text above the first `## ` heading, like the note, is never sent. Headings match without regard to case.
 - A problem (an unknown heading, a heading twice, an empty section, `ignore` without `{words}`, `answer` without `{why}` or `{kind}`, an unknown `{marker}`) never stops a check: the part falls back to the built-in text where it can't be used. Each problem shows as a toast once, led by the path of the file it is in, and is listed by `/grammar prompt`, which also shows the prompt your settings put together from the files.
-- The reply must stay the JSON the plugin parses, in the shape `answer` describes. A reply that doesn't parse shows as a failed check, and 3 in a row pause the checks; delete the section to recover.
+- The reply must stay the JSON the plugin parses, in the shape `answer` describes. A reply that doesn't parse, or whose fixes all lack `from` and `to`, shows as a failed check, and 3 in a row pause the checks; delete the section to recover.
 - The prompt is sent with every check, so a longer one costs more. `tools/import-history.ts` reads the global file too, but not a project's.
 
 ## Your mistakes over time

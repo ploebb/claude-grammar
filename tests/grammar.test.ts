@@ -212,6 +212,16 @@ test('a failed check says so in one dim line', async ($, on) => {
   expect(await (await mountRow($, TYPO)).find({ key: 'gr-error' })).toBeDefined()
 })
 
+test('a reply whose fixes lack from and to is a failed check, not a clean prompt', async ($, on) => {
+  const clock = mock.clock(on)
+  haiku(on, { english: true, fixes: [{ wrong: 'x', right: 'y' }] })
+  await $.prompt.submit({ text: TYPO } as never)
+  await clock.advance(5)
+  const row = await mountRow($, TYPO)
+  expect((await row.find({ key: 'gr-error' }))?.text).toContain('have no "from" and "to" fields')
+  expect(await row.find({ key: 'gr-ok' })).toBeUndefined()
+})
+
 test('three failures in a row pause the checks until /grammar on', async ($, on) => {
   const clock = mock.clock(on)
   const asked = haiku(on, 'sorry, no')
@@ -597,6 +607,9 @@ test('the reply is parsed, and a row finds its check even with text appended', (
   expect(reply?.natural).toBeNull()
   expect(parseReply('{"english": true, "fixes": [{"from": "a", "to": "b"}]}')?.fixes[0]?.why).toBe('')
   expect(() => parseReply('sorry, no')).toThrow()
+  expect(() => parseReply('{"english": true, "fixes": [{"wrong": "x", "right": "y"}]}')).toThrow('have no "from" and "to" fields')
+  expect(parseReply('{"english": true, "fixes": [{"wrong": "x"}, {"from": "a", "to": "b"}]}')?.fixes.length).toBe(1)
+  expect(parseReply('{"english": true, "fixes": []}')?.fixes).toEqual([])
 
   const all = [
     { id: 2, text: 'fix it', status: 'done' as const, fixes: [] },
